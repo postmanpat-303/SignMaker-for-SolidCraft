@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Sign Maker core: fonts, 2D preview, SolidCraft headless build, 3MF and dimension picture.
 Author: Del (postmanpat). Built with Grok Bot."""
-import os, sys, json, re, math, shutil, subprocess, tempfile, zipfile, time, glob
+import os, sys, json, re, math, shutil, subprocess, tempfile, zipfile, time
 
 def _application_dir():
     """Folder the user launched: next to the script, or next to a frozen executable.
@@ -15,16 +15,6 @@ def _application_dir():
 
 APP_DIR = _application_dir()
 HOME = os.path.expanduser("~")
-# Optional local copy of the Gaelchló Bunchló files. Nothing is shipped from
-# here (the font licence forbids redistribution); the folder is read only if
-# it already exists. Any installed font, or a file chosen with Browse, also works.
-BUNCHLO_DIR = os.path.join(HOME, "Downloads", "bungc", "bungc")
-BUNCHLO_NAMES = {
-    "bungc.otf": "Bunchló GC",
-    "buntgc.otf": "Bunchló Trom GC (bold)",
-    "bunigc.otf": "Bunchló Iodálach GC (italic)",
-    "bundgc.otf": "Bunchló Dubh GC",
-}
 # Older portable unpack, still checked last so existing setups keep working.
 _OLD_CLI_ROOT = os.path.join(HOME, "Documents", "GrokPrograms", "SolidCraft")
 CLI_MISSING_MSG = (
@@ -64,7 +54,7 @@ CREATE_NO_WINDOW = 0x08000000
 
 DEFAULTS = {
     "text": "Telefón",
-    "font": "Bunchló Trom GC (bold)",
+    "font": "Times New Roman",
     "length": 63.0, "height": 15.0, "thickness": 0.8,
     "raise": 1.0, "margin": 1.5, "corner": 0.0,
     "auto_size": True, "text_size": 8.0,
@@ -74,7 +64,7 @@ DEFAULTS = {
     "cli_path": "",
     "output_dir": "",
     "favourites": [
-        {"label": "Telefón (Bunchló Trom)", "text": "Telefón", "font": "Bunchló Trom GC (bold)"},
+        {"label": "Telefón (Times New Roman)", "text": "Telefón", "font": "Times New Roman"},
         {"label": "TELEPHONE (Times New Roman)", "text": "TELEPHONE", "font": "Times New Roman"},
     ],
 }
@@ -343,7 +333,7 @@ def _fonts_from_fc_list():
     return out
 
 def _installed_font_files():
-    """Fonts installed for this OS. Extra files and Bunchló are added by list_fonts."""
+    """Fonts installed for this OS. Extra files are added by list_fonts."""
     if os.name == "nt":
         files = _font_dirs_from_registry()
         if not files:
@@ -427,8 +417,6 @@ def list_fonts(refresh=False, extra_files=()):
         except Exception:
             cache = {}
     files = _installed_font_files()
-    if os.path.isdir(BUNCHLO_DIR):
-        files += sorted(glob.glob(os.path.join(BUNCHLO_DIR, "*.otf")))
     files += [p for p in extra_files if os.path.exists(p)]
     seen, fonts, newcache = set(), [], {}
     for p in files:
@@ -450,12 +438,7 @@ def list_fonts(refresh=False, extra_files=()):
                 items = []
         newcache[key] = {"mtime": mt, "fonts": items}
         for it in items:
-            it = dict(it)
-            b = os.path.basename(p).lower()
-            if b in BUNCHLO_NAMES:
-                it["name"] = BUNCHLO_NAMES[b]
-                it["bunchlo"] = True
-            fonts.append(it)
+            fonts.append(dict(it))
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
         with open(FONT_CACHE, "w", encoding="utf-8") as f:
@@ -464,7 +447,7 @@ def list_fonts(refresh=False, extra_files=()):
         pass
     # unique names
     out, names = [], set()
-    for ft in sorted(fonts, key=lambda d: (not d.get("bunchlo", False), d["name"].lower())):
+    for ft in sorted(fonts, key=lambda d: d["name"].lower()):
         if ft["name"] in names:
             continue
         names.add(ft["name"])
@@ -474,8 +457,50 @@ def list_fonts(refresh=False, extra_files=()):
 def font_from_file(path):
     items = _read_names(path)
     it = items[0]
-    it["name"] = BUNCHLO_NAMES.get(os.path.basename(path).lower(), it["name"]) + "  [" + os.path.basename(path) + "]"
+    it["name"] = it["name"] + "  [" + os.path.basename(path) + "]"
     return it
+
+# A common serif, in the order Sign Maker tries them. The first one installed wins.
+SERIF_FONT_NAMES = (
+    "Times New Roman",
+    "Liberation Serif",
+    "DejaVu Serif",
+    "Times",
+    "Nimbus Roman",
+    "Georgia",
+)
+SANS_FONT_NAMES = (
+    "Arial",
+    "Helvetica",
+    "Liberation Sans",
+    "DejaVu Sans",
+    "Nimbus Sans",
+)
+
+def match_font(fonts, names):
+    """A listed font whose name equals one of names, or contains that name."""
+    by_exact = {}
+    for f in fonts:
+        by_exact.setdefault(f["name"].lower(), f)
+    for name in names:
+        hit = by_exact.get(name.lower())
+        if hit:
+            return hit
+    wants = [n.lower() for n in names]
+    for want in wants:
+        for f in fonts:
+            if want in f["name"].lower():
+                return f
+    return None
+
+def preferred_font_name(fonts, names=None):
+    """Times New Roman when it is installed, otherwise another common serif, otherwise the first font."""
+    if names is None:
+        names = SERIF_FONT_NAMES
+    hit = match_font(fonts, names)
+    if hit:
+        return hit["name"]
+    return fonts[0]["name"] if fonts else ""
 
 def bold_variant(font, fonts):
     """The bold face of the same family, or None."""
@@ -486,11 +511,6 @@ def bold_variant(font, fonts):
         if f["family"] == font["family"] and f.get("italic") == font.get("italic") and f.get("weight", 400) >= 700:
             if best is None or abs(f["weight"] - 700) < abs(best["weight"] - 700):
                 best = f
-    if best is None and font.get("bunchlo") and os.path.basename(font["path"]).lower() == "bungc.otf":
-        for f in fonts:
-            if os.path.basename(f["path"]).lower() == "buntgc.otf":
-                best = f
-                break
     return best
 
 def missing_glyphs(font, text):

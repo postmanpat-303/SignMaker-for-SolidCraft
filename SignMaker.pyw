@@ -196,15 +196,8 @@ class App:
         self.schedule(0)
 
     def _fallback_font_name(self):
-        """Times New Roman when it is installed, otherwise a common face, otherwise the first font."""
-        for name in ("Times New Roman", "Liberation Serif", "Liberation Sans", "DejaVu Sans", "Nimbus Roman", "Georgia"):
-            if name in self.font_by_name:
-                return name
-        for want in ("times new roman", "liberation serif", "dejavu sans", "nimbus roman"):
-            for name in self.font_by_name:
-                if want in name.lower():
-                    return name
-        return self.fonts[0]["name"]
+        """Times New Roman when it is installed, otherwise another common serif, otherwise the first font."""
+        return sc.preferred_font_name(self.fonts)
 
     def _fill_list(self):
         q = self.v_search.get().lower().strip()
@@ -530,13 +523,17 @@ def selftest():
     root = tk.Tk(); root.withdraw()
     app = App(root, selftest=True)
     log.append("fonts: %d" % len(app.fonts))
-    for name in ("Bunchló Trom GC (bold)", "Times New Roman"):
-        f = app.font_by_name.get(name)
-        log.append("%s -> %s" % (name, f["path"] if f else "MISSING"))
+    pairs = (
+        ("serif", sc.SERIF_FONT_NAMES, "Telefón", "selftest_serif.png"),
+        ("sans", sc.SANS_FONT_NAMES, "TELEPHONE", "selftest_sans.png"),
+    )
+    for label, names, text, fname in pairs:
+        f = sc.match_font(app.fonts, names)
+        log.append("%s -> %s" % (label, ("%s (%s)" % (f["name"], f["path"])) if f else "MISSING"))
         if f:
-            p = sc.load_settings(); p["text"] = "Telefón ⁊" if "Bun" in name else "TELEPHONE"
+            p = sc.load_settings(); p["text"] = text
             img, info = sc.preview_image(p, f)
-            img.save(os.path.join(sc.DATA_DIR, "selftest_%s.png" % ("bunchlo" if "Bun" in name else "times")))
+            img.save(os.path.join(sc.DATA_DIR, fname))
             log.append("  preview ok %s cap %.2f fits %s" % (img.size, info["cap_mm"], info["fits"]))
     if app.fonts and not any(line.startswith("  preview ok") for line in log):
         f = app.font_by_name.get(app.s.get("font")) or app.fonts[0]

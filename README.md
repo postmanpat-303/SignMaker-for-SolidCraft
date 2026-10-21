@@ -57,9 +57,9 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
       <sub>The app, wording “Telefón”, 2D preview. The 3D pane stays empty until SolidCraft is available.</sub>
     </td>
     <td align="center" width="33%">
-      <img src="docs/screenshots/telefon-dimensions.png" alt="Dimension sheet for a Telefón sign in Bunchló" width="100%">
+      <img src="docs/screenshots/telefon-dimensions.png" alt="Dimension sheet for a Telefón sign" width="100%">
       <br>
-      <sub>Dimension sheet for “Telefón” in Bunchló, saved beside the 3MF.</sub>
+      <sub>Dimension sheet for a Telefón sign, saved beside the 3MF.</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/screenshots/telephone-3d-preview.png" alt="SolidCraft 3D preview of a raised TELEPHONE sign, white letters on a black plate" width="100%">
@@ -69,7 +69,7 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
   </tr>
 </table>
 
-**Make 3MF** also saves a dimension picture (`<Wording> - dimensions.png`) and fills the 3D preview with SolidCraft's render. The sheet and the render above are the two signs this was tuned on: a dimensioned “Telefón” in Bunchló, and a raised “TELEPHONE” in Times New Roman.
+**Make 3MF** also saves a dimension picture (`<Wording> - dimensions.png`) and fills the 3D preview with SolidCraft's render. The sheet and the render above are a dimensioned “Telefón” and a raised “TELEPHONE”.
 
 ## Quick start
 
@@ -137,9 +137,7 @@ Sign Maker looks next to the app, on `PATH`, and in those places. If it still ca
 
 ## Fonts
 
-Any installed font works, and **Browse for font file…** adds a `.ttf`, `.otf` or `.ttc`.
-
-The Irish samples use [Bunchló](https://gaelchlo.com/bungc.html) (Bunchló GC, including the bold face Bunchló Trom). Its licence does not allow redistribution, so the font files are not in this repository. Download them from that official Gaelchló page and either install them or browse to the `.otf`. If you already keep them in `Downloads/bungc/bungc`, Sign Maker will see them there too.
+Any installed font works, and **Browse for font file…** adds a `.ttf`, `.otf` or `.ttc`. Font files are not bundled with Sign Maker.
 
 ## What gets saved
 
@@ -184,14 +182,14 @@ The same layout was checked in OrcaSlicer and Bambu Studio. Anycubic Slicer Next
 
 **The text is bigger than the plate.** The 2D line under the preview says so. Raise the plate size, lower the cap height, or leave auto-fit on.
 
-**A glyph is missing.** The preview names the character. Pick another font, or one that includes that letter (Bunchló includes the fada vowels and ⁊).
+**A glyph is missing.** The preview names the character. Pick a font that includes the needed letters (for example the fada vowels).
 
 </details>
 
 ## From the command line
 
 ```bash
-python signcore.py "Telefón" --font "Bunchló Trom GC (bold)"
+python signcore.py "Telefón" --font "Times New Roman"
 python SignMaker.pyw --selftest
 ```
 
