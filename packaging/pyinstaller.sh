@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Build a standalone Sign Maker bundle for the OS this script is running on.
+# Used by the Release workflow. Does not publish anything.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+OUT="$ROOT/packaging/out"
+rm -rf "$OUT" "$ROOT/build" "$ROOT/dist"
+mkdir -p "$OUT"
+
+uname_s="$(uname -s)"
+arch="$(uname -m)"
+case "$uname_s" in
+  Darwin) kind=macos ;;
+  Linux) kind=linux ;;
+  MINGW*|MSYS*|CYGWIN*) kind=windows ;;
+  *)
+    echo "Unsupported OS: $uname_s" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$kind" == "macos" ]]; then
+  app_name="Sign Maker"
+else
+  app_name="SignMaker"
+fi
+
+# PyInstaller --add-data uses ; on Windows and : everywhere else.
+if [[ "$kind" == "windows" ]]; then
+  data_sep=";"
+else
+  data_sep=":"
+fi
+args=(
+  --noconfirm
+  --clean
+  --windowed
+  --name "$app_name"
+  --hidden-import signcore
+  --hidden-import PIL._tkinter_finder
+  --collect-submodules fontTools.ttLib
+  --collect-submodules PIL
+  --add-data "$ROOT/assets${data_sep}assets"
+)
+if [[ "$kind" == "windows" ]]; then
+  args+=(--icon "$ROOT/assets/icon.ico")
+elif [[ "$kind" == "macos" ]]; then
+  # universal2 needs a universal2 Python. GitHub macos-latest is Apple silicon
+  # and its Python is arm64 only, so the bundle matches the runner.
+  args+=(--icon "$ROOT/assets/icon.icns" --osx-bundle-identifier com.postmanpat.signmaker)
+fi
+
+python -m PyInstaller "${args[@]}" SignMaker.pyw
+
+readme_txt() {
+  cat << EOF
+Sign Maker for SolidCraft
+Author: Del (postmanpat)
+
+This is an unofficial community add-on. It is not affiliated with or
+endorsed by the SolidCraft maintainers.
+SolidCraft itself is not inside this download. Install a build that
+includes solidcraft-cli from:
+https://github.com/tangency-labs/solidcraft/releases
+
+EOF
+}
+
+if [[ "$kind" == "windows" ]]; then
+  {
+    readme_txt
+    echo "Unzip this folder and run SignMaker.exe."
+    echo "Leave the _internal folder next to SignMaker.exe."
+    echo "This build is Windows x64."
+  } > "$ROOT/dist/SignMaker/README.txt"
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -Command "Compress-Archive -Path 'dist/SignMaker/*' -DestinationPath 'packaging/out/SignMaker-windows-x64.zip' -Force"
+  else
+    (cd "$ROOT/dist/SignMaker" && tar -a -cf "$OUT/SignMaker-windows-x64.zip" .)
+  fi
+elif [[ "$kind" == "macos" ]]; then
+  stage="$ROOT/dist/macos-stage"
+  rm -rf "$stage"
+  mkdir -p "$stage"
+  cp -R "$ROOT/dist/Sign Maker.app" "$stage/"
+  {
+    readme_txt
+    echo "Open \"Sign Maker.app\"."
+    echo "The app is unsigned. The first time, right-click it and choose Open."
+    echo "This build is ${arch}, not a universal2 binary."
+    echo "Intel Macs can run the source copy with run.command."
+  } > "$stage/README.txt"
+  # ditto keeps the app bundle structure, including symlinks.
+  ditto -c -k --keepParent "$stage" "$OUT/SignMaker-macos-${arch}.zip"
+else
+  {
+    readme_txt
+    echo "tar -xzf SignMaker-linux-${arch}.tar.gz"
+    echo "./SignMaker/SignMaker"
+    echo "This build is Linux ${arch}, made on Ubuntu."
+    echo "icon.png and sign-maker.desktop are in this folder."
+    echo "To pin a launcher, copy sign-maker.desktop to ~/.local/share/applications"
+    echo "and set Exec and Icon to the full paths of SignMaker and icon.png."
+  } > "$ROOT/dist/SignMaker/README.txt"
+  cp "$ROOT/assets/icon.png" "$ROOT/dist/SignMaker/icon.png"
+  cp "$ROOT/packaging/sign-maker.desktop" "$ROOT/dist/SignMaker/sign-maker.desktop"
+  tar -C "$ROOT/dist" -czf "$OUT/SignMaker-linux-${arch}.tar.gz" SignMaker
+fi
+
+echo "Wrote:"
+ls -lh "$OUT"

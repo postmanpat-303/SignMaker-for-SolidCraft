@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-tk python3-venv python3-pip xvfb fontconfig fonts-dejavu-core
+
+      - name: Set up Python
+        if: runner.os != 'Linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Virtualenv and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            PY=python3
+          else
+            PY=python
+          fi
+          "$PY" -m venv .venv
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN=".venv/Scripts"
+          else
+            BIN=".venv/bin"
+          fi
+          echo "$PWD/$BIN" >> "$GITHUB_PATH"
+          "$BIN/python" -m pip install -U pip
+          "$BIN/python" -m pip install -r requirements.txt
+
+      - name: Compile and import
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile SignMaker.pyw signcore.py
+          python -c "import signcore; print('output', signcore.default_output_dir()); print('config', signcore.DATA_DIR)"
+          python -c "import importlib.machinery, importlib.util; loader=importlib.machinery.SourceFileLoader('SignMaker','SignMaker.pyw'); spec=importlib.util.spec_from_loader(loader.name, loader); mod=importlib.util.module_from_spec(spec); loader.exec_module(mod); print('imported', mod.__name__)"
+
+      - name: Headless selftest
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_CONFIG_HOME="${RUNNER_TEMP}/signmaker-config"
+          export XDG_CACHE_HOME="${RUNNER_TEMP}/signmaker-cache"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            xvfb-run -a python SignMaker.pyw --selftest
+          else
+            python SignMaker.pyw --selftest
+          fi
