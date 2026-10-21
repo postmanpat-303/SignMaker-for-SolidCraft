@@ -47,15 +47,29 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
 | 🧵 **3MF** | One object, two parts. Plate = filament 1, Text = filament 2 |
 | ⭐ **Favourites** | Wording, font and colours, remembered with the rest of the settings |
 
-## The window
+## Screenshots
 
-<p align="center">
-  <img src="docs/screenshots/app-window.png" alt="Sign Maker window with Telefón typed and the 2D preview showing" width="100%">
-  <br>
-  <sub>Sign Maker with “Telefón” and the 2D preview. The 3D view stays empty until SolidCraft is available.</sub>
-</p>
+<table>
+  <tr>
+    <td align="center" width="34%">
+      <img src="docs/screenshots/app-window.png" alt="Sign Maker window with Telefón typed and the 2D preview showing" width="100%">
+      <br>
+      <sub>The app, wording “Telefón”, 2D preview. The 3D pane stays empty until SolidCraft is available.</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/telefon-dimensions.png" alt="Dimension sheet for a Telefón sign in Bunchló" width="100%">
+      <br>
+      <sub>Dimension sheet for “Telefón” in Bunchló, saved beside the 3MF.</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/telephone-3d-preview.png" alt="SolidCraft 3D preview of a raised TELEPHONE sign, white letters on a black plate" width="100%">
+      <br>
+      <sub>3D preview of “TELEPHONE” in Times New Roman, rendered by SolidCraft.</sub>
+    </td>
+  </tr>
+</table>
 
-**Make 3MF** also saves a dimension picture (`<Wording> - dimensions.png`) and fills the 3D preview with SolidCraft's render. A raised “TELEPHONE” in Times New Roman and a dimensioned “Telefón” in Bunchló are the two signs this was tuned on.
+**Make 3MF** also saves a dimension picture (`<Wording> - dimensions.png`) and fills the 3D preview with SolidCraft's render. The sheet and the render above are the two signs this was tuned on: a dimensioned “Telefón” in Bunchló, and a raised “TELEPHONE” in Times New Roman.
 
 ## Quick start
 
