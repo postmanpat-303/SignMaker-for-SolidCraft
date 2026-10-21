@@ -42,14 +42,14 @@ args=(
   --hidden-import PIL._tkinter_finder
   --collect-submodules fontTools.ttLib
   --collect-submodules PIL
-  --add-data "$ROOT/assets${data_sep}assets"
+  --add-data "assets${data_sep}assets"
 )
 if [[ "$kind" == "windows" ]]; then
-  args+=(--icon "$ROOT/assets/icon.ico")
+  args+=(--icon "assets/icon.ico")
 elif [[ "$kind" == "macos" ]]; then
   # universal2 needs a universal2 Python. GitHub macos-latest is Apple silicon
   # and its Python is arm64 only, so the bundle matches the runner.
-  args+=(--icon "$ROOT/assets/icon.icns" --osx-bundle-identifier com.postmanpat.signmaker)
+  args+=(--icon "assets/icon.icns" --osx-bundle-identifier com.postmanpat.signmaker)
 fi
 
 python -m PyInstaller "${args[@]}" SignMaker.pyw
