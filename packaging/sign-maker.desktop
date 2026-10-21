@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Sign Maker for SolidCraft
+GenericName=Sign maker
+Comment=Two-colour 3D-print signs, previewed and exported with SolidCraft
+Exec=./SignMaker
+Icon=icon.png
+Terminal=false
+Categories=Graphics;Engineering;
+Keywords=3D;print;sign;SolidCraft;3MF;
+StartupWMClass=SignMaker

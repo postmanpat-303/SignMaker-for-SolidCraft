@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# PyInstaller
+build/
+dist/
+packaging/out/
+*.spec
+
+# Sign Maker settings and local test output (real settings live in the OS config dir)
+settings.json
+fontcache.json
+selftest.log
+selftest_*.png
+
+# Generated model files, if a build is run inside the repo
+*.3mf
+*.stl
+*.solidcraft
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/

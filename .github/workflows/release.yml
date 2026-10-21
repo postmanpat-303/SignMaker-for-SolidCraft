@@ -1,0 +1,112 @@
+name: Release
+
+# Builds standalone bundles when a tag v* is pushed, and attaches them to a
+# GitHub Release. Nothing here runs on a pull request, and this workflow does
+# not create the tag.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+          - os: macos-latest
+            label: macos-arm64
+          - os: ubuntu-latest
+            label: linux-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Linux runner's setup-python build is not linked against system Tk.
+      # Use Ubuntu's Python, which is, so PyInstaller can bundle tkinter.
+      - name: Linux Python with Tk
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-tk python3-venv python3-pip python3-dev binutils
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          "${RUNNER_TEMP}/venv/bin/python" -m pip install -U pip
+          "${RUNNER_TEMP}/venv/bin/python" -m pip install -r requirements.txt pyinstaller
+          echo "${RUNNER_TEMP}/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Python
+        if: runner.os != 'Linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        if: runner.os != 'Linux'
+        run: python -m pip install -U pip && python -m pip install -r requirements.txt pyinstaller
+
+      - name: Tk imports
+        shell: bash
+        run: python -c "import tkinter, PIL, fontTools; print('tk', tkinter.TkVersion)"
+
+      - name: PyInstaller
+        shell: bash
+        run: bash packaging/pyinstaller.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.label }}
+          path: packaging/out/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: bundles
+          merge-multiple: true
+
+      - name: Checksums and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd bundles
+          sha256sum SignMaker-* > SHA256SUMS.txt
+          cat > NOTES.md << 'EOF'
+          Sign Maker for SolidCraft, by Del (postmanpat).
+
+          Unofficial community add-on. Not affiliated with or endorsed by the SolidCraft maintainers.
+          SolidCraft is a separate install: https://github.com/tangency-labs/solidcraft/releases
+
+          ### Windows (x64)
+          Unzip `SignMaker-windows-x64.zip` and run `SignMaker.exe`. Leave the `_internal` folder beside the exe.
+
+          ### macOS (Apple silicon, arm64)
+          Unzip and open `Sign Maker.app`. The app is unsigned: the first time, right-click it and choose **Open**.
+          This is not a universal2 binary. The GitHub macOS runner's Python is arm64-only, so an Intel + Apple silicon build is not produced. Intel Macs can run from source with `run.command`.
+
+          ### Linux (x86_64)
+          `tar -xzf SignMaker-linux-x86_64.tar.gz` then `./SignMaker/SignMaker`. Built on Ubuntu. aarch64: run from source with `run.sh`.
+
+          macOS and Linux builds are new and community-tested. The author has tested Sign Maker on Windows.
+          EOF
+          tag="${{ github.ref_name }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" SignMaker-* SHA256SUMS.txt --clobber
+          else
+            gh release create "$tag" SignMaker-* SHA256SUMS.txt \
+              --title "Sign Maker ${tag}" \
+              --notes-file NOTES.md
+          fi
