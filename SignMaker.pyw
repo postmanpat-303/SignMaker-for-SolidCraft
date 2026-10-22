@@ -122,6 +122,44 @@ def centre_window(win, parent=None):
     win.geometry("+%d+%d" % (x, y))
 
 
+def work_area(win):
+    """Usable screen area (x, y, w, h), leaving out the Windows taskbar."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            r = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0):
+                return r.left, r.top, r.right - r.left, r.bottom - r.top
+        except Exception:
+            pass
+    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    return 0, 0, sw, sh - 60
+
+
+def place_main_window(root, pref_w=1180, pref_h=800):
+    """Open the main window centred and fully on screen; maximise when the screen is smaller than the layout."""
+    root.update_idletasks()
+    ax, ay, aw, ah = work_area(root)
+    w = max(pref_w, root.winfo_reqwidth()); h = max(pref_h, root.winfo_reqheight())
+    frame_w, frame_h = 16, 40          # window border and title bar
+    too_big = w + frame_w > aw or h + frame_h > ah
+    w = min(w, aw - frame_w); h = min(h, ah - frame_h)
+    root.minsize(min(900, w), min(600, h))
+    x = ax + (aw - w - frame_w) // 2; y = ay + (ah - h - frame_h) // 2
+    root.geometry("%dx%d+%d+%d" % (w, h, max(ax, x), max(ay, y)))
+    root.deiconify()
+    if too_big:
+        try:
+            root.state("zoomed")                 # Windows / macOS
+        except tk.TclError:
+            try:
+                root.attributes("-zoomed", True)  # Linux
+            except tk.TclError:
+                pass
+    root.lift(); root.focus_force()
+
+
 # ---------------------------------------------------------------- theme
 class Theme:
     """Sun Valley (Windows 11 style) light/dark theme with fonts that exist on this OS."""
@@ -337,7 +375,6 @@ class App:
         self.theme = Theme(root)
         self.theme.apply(self.s.get("theme", "light"))
         root.title(APP_NAME)
-        root.minsize(1180, 800)
         self._build_menu()
         self._build_ui()
         self._apply_widget_colours()
@@ -1246,11 +1283,13 @@ if __name__ == "__main__":
             raise
         sys.exit(0)
     root = tk.Tk()
+    root.withdraw()                      # stay hidden until it is sized and centred
     try:
         root.tk.call("tk", "scaling", 1.3)
     except Exception:
         pass
     app = App(root)
+    place_main_window(root)
     if "--show-about" in sys.argv:  # used for README screenshots
         root.after(1500, app.show_about)
     root.mainloop()
