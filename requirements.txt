@@ -1,2 +1,3 @@
 Pillow>=10
 fonttools>=4.40
+sv-ttk>=2.6

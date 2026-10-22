@@ -30,7 +30,7 @@
   Not affiliated with or endorsed by the SolidCraft maintainers.
 </p>
 
-Sign Maker builds a small 3D-print nameplate: a plate with one line of text centred on it. You see the sign in 2D immediately, and in 3D once SolidCraft has rendered it. **Make 3MF** writes one file with two parts, Plate on filament 1 and Text on filament 2, plus a dimension picture and the `.solidcraft` design.
+Sign Maker builds a small 3D-print nameplate: a plate with one line of text centred on it. You see the sign in 2D immediately, and in 3D a moment later: the 3D preview rebuilds itself in the background about a second after you stop typing or changing anything. **Make 3MF** writes one file with two parts, Plate on filament 1 and Text on filament 2, plus a dimension picture and the `.solidcraft` design.
 
 It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraft's headless `solidcraft-cli`. The 2D preview does not need it.
 
@@ -43,25 +43,40 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
 | 📐 **Sizes** | Plate, thickness, raise, margin, corner radius, letter spacing. Text auto-fits, or you set the cap height |
 | 🎨 **Two colours** | Plate and text. Swatches, `#RRGGBB`, or presets |
 | 👁️ **2D preview** | True proportions, drawn with the real font file |
-| 🧊 **3D preview** | SolidCraft's own render of the sign that will print |
+| 🧊 **Live 3D preview** | SolidCraft's own render of the sign that will print. Updates by itself about a second after your last change, in the background so the window never freezes. Turn **Auto 3D preview** off and use **Refresh 3D preview** (F5) instead if you prefer |
 | 🧵 **3MF** | One object, two parts. Plate = filament 1, Text = filament 2 |
 | ⭐ **Favourites** | Wording, font and colours, remembered with the rest of the settings |
+| 🌗 **Light and dark** | A clean, modern Windows 11 style look ([Sun Valley](https://github.com/rdbende/Sun-Valley-ttk-theme)) in light or dark: the **Dark** switch or **View** menu |
+| ☰ **Menus** | **File** (Make 3MF, save folder, SolidCraft path), **View** (auto 3D preview, theme) and **Help** (About, GitHub, check for new releases) |
 
 ## Screenshots
 
+<p align="center">
+  <img src="docs/screenshots/app-window.png" alt="Sign Maker window: Telefón in white on a green plate, with the 2D preview and SolidCraft's 3D preview" width="100%">
+  <br>
+  <sub>The main window: wording “Telefón”, white on An Post green. The 3D preview is SolidCraft's render, refreshed automatically.</sub>
+</p>
+
 <table>
   <tr>
-    <td align="center" width="34%">
-      <img src="docs/screenshots/app-window.png" alt="Sign Maker window with Telefón typed and the 2D preview showing" width="100%">
+    <td align="center" width="50%">
+      <img src="docs/screenshots/app-window-dark.png" alt="Sign Maker in the dark theme" width="100%">
       <br>
-      <sub>The app, wording “Telefón”, 2D preview. The 3D pane stays empty until SolidCraft is available.</sub>
+      <sub>Dark theme.</sub>
     </td>
-    <td align="center" width="33%">
+    <td align="center" width="50%">
+      <img src="docs/screenshots/about-window.png" alt="Help, About window: version, credits, Buy me a coffee and thanks to SolidCraft" width="70%">
+      <br>
+      <sub>Help › About.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
       <img src="docs/screenshots/telefon-dimensions.png" alt="Dimension sheet for a Telefón sign" width="100%">
       <br>
       <sub>Dimension sheet for a Telefón sign, saved beside the 3MF.</sub>
     </td>
-    <td align="center" width="33%">
+    <td align="center" width="50%">
       <img src="docs/screenshots/telephone-3d-preview.png" alt="SolidCraft 3D preview of a raised TELEPHONE sign, white letters on a black plate" width="100%">
       <br>
       <sub>3D preview of “TELEPHONE” in Times New Roman, rendered by SolidCraft.</sub>
@@ -69,12 +84,12 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
   </tr>
 </table>
 
-**Make 3MF** also saves a dimension picture (`<Wording> - dimensions.png`) and fills the 3D preview with SolidCraft's render. The sheet and the render above are a dimensioned “Telefón” and a raised “TELEPHONE”.
+**Make 3MF** also saves a dimension picture (`<Wording> - dimensions.png`). The sheet and the render above are a dimensioned “Telefón” and a raised “TELEPHONE”.
 
 ## Quick start
 
 1. Install [Python 3.10 or newer](https://www.python.org/downloads/) and [SolidCraft](https://github.com/tangency-labs/solidcraft/releases) (see [SolidCraft and its CLI](#solidcraft-and-its-cli) below).
-2. Install the two Python libraries:
+2. Install the Python libraries (Pillow, fontTools and the Sun Valley theme):
 
    ```bash
    python -m pip install -r requirements.txt
@@ -91,7 +106,7 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
    On Linux, Tk is often a separate package: `sudo apt install python3-tk`.
 
 4. If Sign Maker cannot see `solidcraft-cli`, press **Browse** and point at it. You can still edit the wording and use the 2D preview before that.
-5. Press **3D preview** to render, or **Make 3MF** to save.
+5. Change anything and the 3D preview follows on its own. Press **Make 3MF** to save.
 
 Finished signs go in `~/Documents/Sign Maker/Signs/<Wording>/`. Change that folder in the window. An existing sign is never overwritten: the next one is `<Wording>_v2`, `_v3`, …
 
@@ -137,7 +152,7 @@ macOS and Linux builds are new. Sign Maker was written and tested on Windows, an
 
 ## SolidCraft and its CLI
 
-Sign Maker drives `solidcraft-cli` (tested with SolidCraft 0.18.3; 0.18.4 packages are the same shape). Get it from the [SolidCraft releases](https://github.com/tangency-labs/solidcraft/releases). Headless use is described in the [SolidCraft print docs](https://docs.solidcraft.io/print.html).
+Sign Maker drives `solidcraft-cli` (tested with SolidCraft 0.18.3 on Windows and 0.19.0 on Linux). Get it from the [SolidCraft releases](https://github.com/tangency-labs/solidcraft/releases). Headless use is described in the [SolidCraft print docs](https://docs.solidcraft.io/print.html).
 
 | OS | Where the CLI comes from |
 |---|---|
@@ -184,7 +199,9 @@ The same layout was checked in OrcaSlicer and Bambu Studio. Anycubic Slicer Next
 
 **solidcraft-cli was not found.** Install a SolidCraft package that includes the CLI (not the Windows single-file `.exe`), then Browse. The 2D preview still works without it.
 
-**3D preview or Make 3MF fails.** The message is from SolidCraft. A character the font cannot draw, or a script face whose letters overlap, is the usual cause.
+**3D preview or Make 3MF fails.** The 3D pane says so and the status bar shows SolidCraft's message. A character the font cannot draw, or a script face whose letters overlap, is the usual cause.
+
+**The 3D preview is slow on my PC.** Each preview is a full SolidCraft build (a few seconds). Untick **Auto 3D preview** and press **Refresh 3D preview** (F5) when you want one.
 
 **No fonts in the list.** On Linux install a font package and `fontconfig` (`fc-list` should print paths). On macOS the system font folders are scanned. You can always browse to a font file.
 
@@ -233,6 +250,10 @@ MIT. Copyright 2026 **Del (postmanpat)**. See [LICENSE](LICENSE).
 
 Sign Maker is an unofficial community add-on. It is not affiliated with or endorsed by the [SolidCraft](https://github.com/tangency-labs/solidcraft) maintainers.
 
+Thank you to [SolidCraft](https://github.com/tangency-labs/solidcraft) by Tangency Labs (Apache-2.0): every 3D model Sign Maker makes is built by it, and Sign Maker wouldn't exist without it. The look comes from the [Sun Valley ttk theme](https://github.com/rdbende/Sun-Valley-ttk-theme) by rdbende (MIT), bundled in the downloads.
+
 ## Support the author
+
+If you find Sign Maker useful, you can buy me a coffee ☕
 
 [Buy Me a Coffee](https://buymeacoffee.com/postmanpat) · [PayPal](https://paypal.me/derekh100)

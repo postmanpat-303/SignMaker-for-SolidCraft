@@ -63,6 +63,8 @@ DEFAULTS = {
     "stl": False,
     "cli_path": "",
     "output_dir": "",
+    "auto_preview": True,
+    "theme": "light",
     "favourites": [
         {"label": "Telefón (Times New Roman)", "text": "Telefón", "font": "Times New Roman"},
         {"label": "TELEPHONE (Times New Roman)", "text": "TELEPHONE", "font": "Times New Roman"},
@@ -623,14 +625,33 @@ def preview_image(p, font, width_px=760, bg=(236, 236, 236)):
     return img, info
 
 # ---------------------------------------------------------------- SolidCraft
-def _run(args, timeout=600):
-    kwargs = {"capture_output": True, "timeout": timeout}
+class Cancelled(Exception):
+    """A build was cancelled because a newer one replaced it."""
+
+
+def _run(args, timeout=600, cancel=None):
+    """Run solidcraft-cli. cancel: a threading.Event; when it is set the process is killed."""
+    kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
     # CREATE_NO_WINDOW is Windows-only. Passing creationflags elsewhere raises.
     if os.name == "nt":
         kwargs["creationflags"] = CREATE_NO_WINDOW
-    r = subprocess.run(args, **kwargs)
-    out = (r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace")
-    return r.returncode, out
+    if cancel is not None and cancel.is_set():
+        raise Cancelled()
+    proc = subprocess.Popen(args, **kwargs)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            so, se = proc.communicate(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            if cancel is not None and cancel.is_set():
+                proc.kill(); proc.communicate()
+                raise Cancelled()
+            if time.monotonic() > deadline:
+                proc.kill(); proc.communicate()
+                raise subprocess.TimeoutExpired(args, timeout)
+    out = (so or b"").decode("utf-8", "replace") + (se or b"").decode("utf-8", "replace")
+    return proc.returncode, out
 
 def _write_json(path, obj):
     with open(path, "w", encoding="utf-8") as f:
@@ -681,11 +702,11 @@ def build_commands(p, font, cap, at, glyph_names=None, plate=True, export=None):
             cmds.append(_cmd("file.export", path=path, format=fmt, bodies=bodies))
     return {"commands": cmds}
 
-def _eval(cli, design, work):
+def _eval(cli, design, work, cancel=None):
     jo = os.path.join(work, "eval.json")
     if os.path.exists(jo):
         os.remove(jo)
-    rc, out = _run([cli, "eval", design, "--json-out", jo])
+    rc, out = _run([cli, "eval", design, "--json-out", jo], cancel=cancel)
     if rc != 0 or not os.path.exists(jo):
         raise RuntimeError("SolidCraft eval failed:\n" + out[-2000:])
     with open(jo, encoding="utf-8") as f:
@@ -699,10 +720,16 @@ def _union_bbox(bodies):
     mx = [max(b["bbox"]["max"][i] for b in bodies) for i in range(3)]
     return mn, mx
 
-def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=True):
-    """Build headless. Returns dict with design, 3mf, stls, snapshot, eval, bboxes, cap height."""
+def new_work_dir(prefix=""):
+    """A fresh, unique folder under WORK_DIR (two builds in the same second never share one)."""
+    os.makedirs(WORK_DIR, exist_ok=True)
+    return tempfile.mkdtemp(prefix=prefix + time.strftime("%Y%m%d-%H%M%S-"), dir=WORK_DIR)
+
+def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=True, cancel=None):
+    """Build headless. Returns dict with design, 3mf, stls, snapshot, eval, bboxes, cap height.
+    cancel: optional threading.Event. Setting it stops the build and raises Cancelled."""
     cli = find_cli()
-    work = work or os.path.join(WORK_DIR, time.strftime("%Y%m%d-%H%M%S"))
+    work = work or new_work_dir()
     os.makedirs(work, exist_ok=True)
     L, H, T, m = float(p["length"]), float(p["height"]), float(p["thickness"]), float(p["margin"])
     aw, ah = L - 2 * m, H - 2 * m
@@ -714,10 +741,10 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
     _write_json(s1, build_commands(p, font, cap0, (0, 0), plate=False))
     d1 = os.path.join(work, "measure.solidcraft")
     log("Measuring the text in SolidCraft…")
-    rc, out = _run([cli, "run", s1, "--save", d1, "--quiet"])
+    rc, out = _run([cli, "run", s1, "--save", d1, "--quiet"], cancel=cancel)
     if rc != 0:
         raise RuntimeError("SolidCraft could not set this text in this font:\n" + out[-1500:])
-    ev = _eval(cli, d1, work)
+    ev = _eval(cli, d1, work, cancel)
     tb = _text_bodies(ev)
     if not tb:
         raise RuntimeError("SolidCraft made no text bodies (the font may have no outlines for this wording).")
@@ -740,10 +767,10 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
         s2 = os.path.join(work, "build.json")
         _write_json(s2, build_commands(p, font, cap, at, glyph_names=names, export=exports))
         log("Building the sign in SolidCraft (pass %d)…" % (attempt + 1))
-        rc, out = _run([cli, "run", s2, "--save", design, "--quiet"])
+        rc, out = _run([cli, "run", s2, "--save", design, "--quiet"], cancel=cancel)
         if rc != 0:
             raise RuntimeError("SolidCraft build failed:\n" + out[-1500:])
-        ev = _eval(cli, design, work)
+        ev = _eval(cli, design, work, cancel)
         tb = _text_bodies(ev)
         if len(tb) != 1:
             names = [b["name"] for b in tb]
@@ -774,7 +801,7 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
         log("Rendering 3D preview…")
         cam = {"target": [0, 0, 0.5], "yaw": -0.5, "pitch": 0.75, "distance": max(L * 0.95, H * 2.5)}
         rc, out = _run([cli, "snapshot", design, "--out", snap, "--no-grid", "--no-axes", "--width", "1200", "--height", "700",
-                        "--camera", json.dumps(cam)])
+                        "--camera", json.dumps(cam)], cancel=cancel)
         res["snapshot"] = snap if rc == 0 and os.path.exists(snap) else None
     return res
 

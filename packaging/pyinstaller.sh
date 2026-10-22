@@ -40,6 +40,8 @@ args=(
   --name "$app_name"
   --hidden-import signcore
   --hidden-import PIL._tkinter_finder
+  --hidden-import sv_ttk
+  --collect-data sv_ttk
   --collect-submodules fontTools.ttLib
   --collect-submodules PIL
   --add-data "assets${data_sep}assets"
