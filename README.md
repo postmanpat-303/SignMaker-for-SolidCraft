@@ -120,7 +120,7 @@ Finished signs go in `~/Documents/Sign Maker/Signs/<Wording>/`. Change that fold
 | Margin | 1.5 mm |
 | Corner radius | 0 (set one if you want rounded corners) |
 | Colours | plate `#FFFFFF` on filament 1, text `#000000` on filament 2 |
-| Sample wording | Telefón |
+| Starting wording | Your Text |
 
 Engraved style cuts the letters into the plate and leaves a flush inlay of the text colour. It is still two parts.
 
