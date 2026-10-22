@@ -74,11 +74,36 @@ if [[ "$kind" == "windows" ]]; then
     echo "Unzip this folder and run SignMaker.exe."
     echo "Leave the _internal folder next to SignMaker.exe."
     echo "This build is Windows x64."
+    echo "Prefer an installer? Use SignMaker-<version>-setup-x64.exe from the same release."
   } > "$ROOT/dist/SignMaker/README.txt"
+  cp "$ROOT/LICENSE" "$ROOT/dist/SignMaker/LICENSE.txt"
   if command -v powershell.exe >/dev/null 2>&1; then
     powershell.exe -NoProfile -Command "Compress-Archive -Path 'dist/SignMaker/*' -DestinationPath 'packaging/out/SignMaker-windows-x64.zip' -Force"
   else
     (cd "$ROOT/dist/SignMaker" && tar -a -cf "$OUT/SignMaker-windows-x64.zip" .)
+  fi
+  # Setup exe (NSIS, packaging/windows/signmaker.nsi). Version comes from
+  # $VERSION, else the v* tag being built, else 0.0.0.
+  version="${VERSION:-}"
+  if [[ -z "$version" && "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+    version="${GITHUB_REF_NAME#v}"
+  fi
+  version="${version:-0.0.0}"
+  IFS=. read -r v1 v2 v3 v4 <<< "${version%%-*}"
+  viversion="${v1:-0}.${v2:-0}.${v3:-0}.${v4:-0}"
+  makensis_bin="$(command -v makensis || true)"
+  if [[ -z "$makensis_bin" && -x "/c/Program Files (x86)/NSIS/makensis.exe" ]]; then
+    makensis_bin="/c/Program Files (x86)/NSIS/makensis.exe"
+  fi
+  if [[ -n "$makensis_bin" ]]; then
+    # MSYS would rewrite /DVERSION=... as a path; NSIS also accepts -D.
+    MSYS2_ARG_CONV_EXCL="*" "$makensis_bin" -V3 \
+      "-DVERSION=$version" "-DVIVERSION=$viversion" \
+      "-DPKGDIR=..\\..\\dist\\SignMaker" \
+      "-DOUTFILE=..\\out\\SignMaker-${version}-setup-x64.exe" \
+      "packaging/windows/signmaker.nsi"
+  else
+    echo "makensis not found: skipping the setup exe" >&2
   fi
 elif [[ "$kind" == "macos" ]]; then
   stage="$ROOT/dist/macos-stage"

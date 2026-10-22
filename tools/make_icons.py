@@ -26,7 +26,9 @@ def main():
     out256 = os.path.join(ROOT, "assets", "icon-256.png")
     im.resize((256, 256), Image.Resampling.LANCZOS).save(out256)
     ico = os.path.join(ROOT, "assets", "icon.ico")
-    im.save(ico, format="ICO", sizes=[(s, s) for s in ICO_SIZES])
+    # BMP frames: Explorer and the installer often show the generic exe icon
+    # when the small frames are PNG.
+    im.save(ico, format="ICO", sizes=[(s, s) for s in ICO_SIZES], bitmap_format="bmp")
     icns = os.path.join(ROOT, "assets", "icon.icns")
     im.save(icns, format="ICNS")
     print("wrote", out256)

@@ -115,10 +115,22 @@ Standalone bundles are attached to a GitHub Release when a tag `v*` is pushed. T
 
 [Releases](https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases)
 
+### Windows installer
+
+The easiest way on Windows is the Setup exe: download `SignMaker-<version>-setup-x64.exe` from the [latest release](https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases/latest) and run it.
+
+- Installs to `C:\Program Files\Sign Maker` (asks for admin rights), with a **Start Menu** shortcut, an optional **desktop** shortcut, and an uninstaller in **Settings > Apps**.
+- Shows the MIT licence, and reminds you that SolidCraft is installed separately.
+- Running a newer setup upgrades in place. Your settings and saved signs are kept, and uninstalling leaves them alone too.
+- Silent install: `SignMaker-<version>-setup-x64.exe /S`
+- The setup is not code-signed. If SmartScreen says "Windows protected your PC", choose **More info** then **Run anyway**.
+
+Prefer no install? The portable zip below runs from any folder.
+
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| File | `SignMaker-windows-x64.zip` | `SignMaker-macos-arm64.zip` | `SignMaker-linux-x86_64.tar.gz` |
-| Run | Unzip and open `SignMaker.exe`. Leave `_internal` beside it. | Unzip and open `Sign Maker.app`. | `tar -xzf SignMaker-linux-x86_64.tar.gz` then `./SignMaker/SignMaker` |
+| File | `SignMaker-<version>-setup-x64.exe` (installer) or `SignMaker-windows-x64.zip` (portable) | `SignMaker-macos-arm64.zip` | `SignMaker-linux-x86_64.tar.gz` |
+| Run | Run the setup, or unzip and open `SignMaker.exe` (leave `_internal` beside it). | Unzip and open `Sign Maker.app`. | `tar -xzf SignMaker-linux-x86_64.tar.gz` then `./SignMaker/SignMaker` |
 | Notes | x64. The author tests here. | **New, community-tested.** Apple silicon (arm64), not a universal2 binary. Unsigned: the first time, right-click the app and choose **Open**. Intel Macs: use `run.command`. | **New, community-tested.** x86_64, built on Ubuntu. The tarball includes `icon.png` and `sign-maker.desktop`. aarch64: use `run.sh`. |
 
 macOS and Linux builds are new. Sign Maker was written and tested on Windows, and those two ports are community-tested from there.
@@ -211,7 +223,7 @@ Settings:
 
 ## Building a release bundle
 
-Tag `v*` (for example `v1.0.0`) and push the tag. GitHub Actions runs PyInstaller on Windows, macOS and Linux and attaches the zip, the app zip and the tarball, plus `SHA256SUMS.txt`, to the release. The macOS runner's Python is arm64-only, so that build is not universal2. Do not expect a published release until a tag is pushed.
+Tag `v*` (for example `v1.0.0`) and push the tag. GitHub Actions runs PyInstaller on Windows, macOS and Linux and attaches the Windows setup exe and zip, the macOS app zip and the Linux tarball, plus `SHA256SUMS.txt`, to the release. The Windows setup is built with [NSIS](https://nsis.sourceforge.io/) from `packaging/windows/signmaker.nsi`; `tools/make_branding.py` draws its wizard bitmaps. The macOS runner's Python is arm64-only, so that build is not universal2. Do not expect a published release until a tag is pushed.
 
 Icons for the bundles come from `assets/`. `tools/make_icons.py` rebuilds the `.ico`, `.icns` and 256 px PNG from `assets/icon.png`.
 

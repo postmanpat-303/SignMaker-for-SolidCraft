@@ -2,12 +2,19 @@ name: Release
 
 # Builds standalone bundles when a tag v* is pushed, and attaches them to a
 # GitHub Release. Nothing here runs on a pull request, and this workflow does
-# not create the tag.
+# not create the tag. A manual run (workflow_dispatch) builds the bundles as
+# artifacts only and never publishes.
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for the Windows setup exe (manual runs only; artifacts, no release)"
+        required: false
+        default: "0.0.0"
 
 permissions:
   contents: read
@@ -55,9 +62,47 @@ jobs:
         shell: bash
         run: python -c "import tkinter, PIL, fontTools; print('tk', tkinter.TkVersion)"
 
+      - name: NSIS (Windows setup exe)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v makensis >/dev/null && [ ! -x "/c/Program Files (x86)/NSIS/makensis.exe" ]; then
+            # community.chocolatey.org sometimes times out (504): retry
+            for i in 1 2 3 4 5; do
+              choco install nsis -y --no-progress && break
+              echo "choco failed (attempt $i), retrying in 30 s"; sleep 30
+            done
+          fi
+          ls "/c/Program Files (x86)/NSIS/makensis.exe" || command -v makensis
+
       - name: PyInstaller
         shell: bash
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && '' || inputs.version }}
         run: bash packaging/pyinstaller.sh
+
+      - name: Silent install / uninstall of the setup exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem packaging\out\SignMaker-*-setup-x64.exe | Select-Object -First 1
+          if (-not $setup) { "::error::no setup exe was built"; exit 1 }
+          "setup: $($setup.Name) $([math]::Round($setup.Length / 1MB, 1)) MB"
+          $p = Start-Process $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode) { "::error::setup exit $($p.ExitCode)"; exit 1 }
+          $dir = "$env:ProgramFiles\Sign Maker"
+          Get-ChildItem $dir | Format-Table Name, Length
+          foreach ($f in 'SignMaker.exe', '_internal', 'LICENSE.txt', 'Uninstall.exe') {
+            if (-not (Test-Path "$dir\$f")) { "::error::$f not installed"; exit 1 }
+          }
+          $lnk = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Sign Maker\Sign Maker.lnk"
+          if (-not (Test-Path $lnk)) { "::error::Start Menu shortcut missing"; exit 1 }
+          if (-not (Test-Path "$env:PUBLIC\Desktop\Sign Maker.lnk")) { "::error::desktop shortcut missing"; exit 1 }
+          $u = Start-Process "$dir\Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
+          Start-Sleep 5
+          if (Test-Path "$dir\SignMaker.exe") { "::error::uninstall left the exe"; exit 1 }
+          if (Test-Path $lnk) { "::error::uninstall left the Start Menu shortcut"; exit 1 }
+          "install/uninstall OK"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -68,6 +113,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: build
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -92,7 +138,8 @@ jobs:
           SolidCraft is a separate install: https://github.com/tangency-labs/solidcraft/releases
 
           ### Windows (x64)
-          Unzip `SignMaker-windows-x64.zip` and run `SignMaker.exe`. Leave the `_internal` folder beside the exe.
+          **Installer:** run `SignMaker-<version>-setup-x64.exe`. It installs to `Program Files\Sign Maker` with a Start Menu shortcut, an optional desktop shortcut and an uninstaller (Settings > Apps). It asks for admin rights. The setup is unsigned, so SmartScreen may say "Windows protected your PC": choose **More info** then **Run anyway**.
+          **Portable:** unzip `SignMaker-windows-x64.zip` and run `SignMaker.exe`. Leave the `_internal` folder beside the exe.
 
           ### macOS (Apple silicon, arm64)
           Unzip and open `Sign Maker.app`. The app is unsigned: the first time, right-click it and choose **Open**.
