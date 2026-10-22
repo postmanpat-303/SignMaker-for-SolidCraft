@@ -545,6 +545,40 @@ def cap_ratio(font):
             _CAP[key] = None
     return _CAP[key]
 
+def snapshot_background_mask(im):
+    """Find the backdrop of a SolidCraft snapshot (a plain top-to-bottom gradient).
+    Returns an "L" mask: 255 where the pixel is backdrop, 0 on the sign, soft on the edges.
+    Only backdrop joined to the picture's corners counts, so a plate colour that happens to
+    match the gradient is left alone."""
+    from PIL import Image, ImageChops, ImageDraw
+    im = im.convert("RGB")
+    W, H = im.size
+    back = im.crop((0, 0, 1, H)).resize((W, H), Image.Resampling.NEAREST)
+    r, g, b = ImageChops.difference(im, back).split()
+    d = ImageChops.lighter(ImageChops.lighter(r, g), b)
+    lo, hi = 3, 24
+    hard = d.point(lambda v: 255 if v <= hi else 0)
+    for xy in ((0, 0), (W - 1, 0), (0, H - 1), (W - 1, H - 1)):
+        if hard.getpixel(xy) == 255:
+            ImageDraw.floodfill(hard, xy, 128)
+    joined = hard.point(lambda v: 255 if v == 128 else 0)
+    soft = d.point(lambda v: 255 if v <= lo else (0 if v >= hi else int(255 * (hi - v) / (hi - lo))))
+    return ImageChops.multiply(soft, joined)
+
+
+def recolour_snapshot(im, mask, colour):
+    """Put a snapshot on a new backdrop: a soft vertical gradient around colour (#rrggbb or RGB)."""
+    from PIL import Image
+    if isinstance(colour, str):
+        colour = tuple(int(colour.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    top = tuple(min(255, c + 14) for c in colour)
+    bottom = tuple(max(0, c - 8) for c in colour)
+    W, H = im.size
+    grad = Image.linear_gradient("L").resize((W, H))
+    back = Image.composite(Image.new("RGB", (W, H), bottom), Image.new("RGB", (W, H), top), grad)
+    return Image.composite(back, im.convert("RGB"), mask)
+
+
 def preview_image(p, font, width_px=760, bg=(236, 236, 236)):
     """Draw the sign at true proportions using the real font file. Returns (PIL image, info dict)."""
     from PIL import Image, ImageDraw, ImageFont
@@ -763,30 +797,60 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
     exports = [(f3, "3mf", ["Plate", "Text"])]
     if p.get("stl"):
         exports += [(os.path.join(work, "plate.stl"), "stl", ["Plate"]), (os.path.join(work, "text.stl"), "stl", ["Text"])]
-    for attempt in range(4):
+    def probe_names():
+        """The text bodies SolidCraft makes at this exact size and position, before they are joined.
+        Script fonts (Lobster etc.) have overlapping, joined-up letters, and the number of separate
+        outlines can change with the size, so names measured at the first size may not match."""
+        sp = os.path.join(work, "probe.json")
+        _write_json(sp, build_commands(p, font, cap, at, plate=False))
+        dp = os.path.join(work, "probe.solidcraft")
+        rc, out = _run([cli, "run", sp, "--save", dp, "--quiet"], cancel=cancel)
+        if rc != 0:
+            raise RuntimeError("SolidCraft build failed:\n" + out[-1500:])
+        return [b["name"] for b in _text_bodies(_eval(cli, dp, work, cancel))]
+
+    best = None          # (off-centre error, cap, at, names) of the best single-body build so far
+    tries = 0
+    while True:
+        tries += 1
         s2 = os.path.join(work, "build.json")
         _write_json(s2, build_commands(p, font, cap, at, glyph_names=names, export=exports))
-        log("Building the sign in SolidCraft (pass %d)…" % (attempt + 1))
+        log("Building the sign in SolidCraft (pass %d)…" % tries)
         rc, out = _run([cli, "run", s2, "--save", design, "--quiet"], cancel=cancel)
         if rc != 0:
             raise RuntimeError("SolidCraft build failed:\n" + out[-1500:])
         ev = _eval(cli, design, work, cancel)
         tb = _text_bodies(ev)
         if len(tb) != 1:
-            names = [b["name"] for b in tb]
+            # The letters split into different pieces at this size: ask SolidCraft for the real names.
+            if tries >= 6:
+                raise RuntimeError("SolidCraft could not join the letters of this wording into one piece.")
+            names = probe_names()
             continue
         mn, mx = _union_bbox(tb)
         w, h = mx[0] - mn[0], mx[1] - mn[1]
         cx, cy = (mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2
         fit = min(aw / w, ah / h) if p.get("auto_size", True) else 1.0
+        err = max(abs(cx), abs(cy), abs(fit - 1.0) * max(aw, ah))
         if abs(cx) < 0.02 and abs(cy) < 0.02 and (fit >= 0.999 and (not p.get("auto_size", True) or fit < 1.01)):
             break
+        if best is None or err < best[0]:
+            best = (err, cap, at, names)
+        if tries >= 6:
+            # Close enough for printing (within 0.1 mm): rebuild the best try instead of failing.
+            if best[0] <= 0.1:
+                _, cap, at, names = best
+                _write_json(s2, build_commands(p, font, cap, at, glyph_names=names, export=exports))
+                rc, out = _run([cli, "run", s2, "--save", design, "--quiet"], cancel=cancel)
+                ev = _eval(cli, design, work, cancel) if rc == 0 else None
+                if ev is not None and len(_text_bodies(ev)) == 1:
+                    tb = _text_bodies(ev)
+                    break
+            raise RuntimeError("Could not centre the text after several tries.")
         if not p.get("auto_size", True):
             fit = 1.0
         cap *= fit
         at = ((at[0] - cx) * fit, (at[1] - cy) * fit)
-    else:
-        raise RuntimeError("Could not centre the text after several tries.")
     plate = [b for b in ev["bodies"] if b["name"] == "Plate"]
     others = [b["name"] for b in ev["bodies"] if b["name"] not in ("Plate", "Text")]
     res = {"work": work, "design": design, "raw3mf": f3, "cap": cap, "eval": ev,

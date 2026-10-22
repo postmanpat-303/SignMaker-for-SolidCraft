@@ -13,7 +13,7 @@ try:
 except Exception:  # pragma: no cover - the app still runs on plain ttk
     sv_ttk = None
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 APP_NAME = "Sign Maker for SolidCraft"
 AUTHOR = "Del (postmanpat)"
@@ -371,6 +371,8 @@ class App:
         self._cur = None             # (params, font, key) of the latest valid design
         self._shown_key = None       # design shown in the 3D view
         self._im3d = None            # PIL image shown in the 3D view
+        self._mask3d = None          # where its backdrop is, so dark theme can recolour it
+        self._w2d = 0                # width the 2D preview was last drawn at
         self._fit_after = None
         self.theme = Theme(root)
         self.theme.apply(self.s.get("theme", "light"))
@@ -535,7 +537,10 @@ class App:
         # --- right: 2D preview
         right.columnconfigure(0, weight=1); right.rowconfigure(1, weight=1)
         p2 = self._card(right, "2D preview  ·  true proportions, real font"); p2.grid(row=0, column=0, sticky="we")
-        self.c2d = tk.Label(p2, borderwidth=0, highlightthickness=0); self.c2d.pack(fill="x")
+        # width=1: the label asks for no width of its own, so the column decides and the
+        # picture is drawn to fit it (see _on_2d_resize), never wider than the window.
+        self.c2d = tk.Label(p2, borderwidth=0, highlightthickness=0, width=1); self.c2d.pack(fill="x")
+        self.c2d.bind("<Configure>", self._on_2d_resize)
         self.v_info = tk.StringVar(value="Loading fonts…")
         self.l_info = ttk.Label(p2, textvariable=self.v_info, style="Info.TLabel")
         self.l_info.pack(anchor="w", pady=(6, 0))
@@ -611,6 +616,7 @@ class App:
         self.c2d.configure(bg=c["preview"])
         self.f3d.configure(bg=c["preview3d"])
         self.c3d.configure(bg=c["preview3d"], fg=c["muted"], font=self.theme.fonts["large"])
+        self._fit_3d()
         for b in self.sw.values():
             b.configure(highlightbackground=c["border"], highlightcolor=c["accent"])
         if not self.theme.sv:
@@ -749,9 +755,11 @@ class App:
         if not f:
             self.v_info.set("Pick a font"); return
         try:
-            w = max(600, self.c2d.winfo_width() or 760)
+            w = self.c2d.winfo_width()
+            w = 760 if w < 50 else max(200, min(w, 1100))
+            self._w2d = w
             bg = tuple(int(self.theme.c["preview"][i:i + 2], 16) for i in (1, 3, 5))
-            img, info = sc.preview_image(p, f, width_px=min(w, 1100), bg=bg)
+            img, info = sc.preview_image(p, f, width_px=w, bg=bg)
         except Exception as ex:
             self.v_info.set("⚠ Preview failed: %s" % ex); self.l_info.configure(style="Warn.TLabel"); return
         self._img2d = ImageTk.PhotoImage(img); self.c2d.config(image=self._img2d)
@@ -767,6 +775,11 @@ class App:
         self.l_info.configure(style="Warn.TLabel" if warn else "Info.TLabel")
         self.save_settings_soon(p)
         self._design_changed(p, f)
+
+    def _on_2d_resize(self, e):
+        w = max(200, min(e.width, 1100))
+        if abs(w - self._w2d) > 2:
+            self.schedule(80)
 
     def save_settings_soon(self, p):
         for k in ["text", "length", "height", "thickness", "raise", "margin", "corner", "spacing", "auto_size", "text_size",
@@ -804,9 +817,9 @@ class App:
         text, style = texts[state]
         self.v_3dstate.set(text[:90]); self.l_3dstate.configure(style=style)
         if state == "busy":
-            if not self.pb3d.winfo_ismapped():
+            if not self.pb3d.winfo_manager():
                 self.pb3d.pack(side="right", padx=(0, 10)); self.pb3d.start(12)
-        elif self.pb3d.winfo_ismapped():
+        elif self.pb3d.winfo_manager():
             self.pb3d.stop(); self.pb3d.pack_forget()
         if self._im3d is None:
             if state == "nocli":
@@ -891,7 +904,7 @@ class App:
                                 cancel=job.cancel)
             im = None
             if res.get("snapshot"):
-                im = Image.open(res["snapshot"]); im.load()
+                im = self._load_snapshot(res["snapshot"])
             tb = res["text_bbox"]
             summary = "Plate %.1f × %.1f × %.2f mm  ·  text %.2f × %.2f mm, top at %.2f mm, cap height %.2f mm" % (
                 p["length"], p["height"], p["thickness"], tb["max"][0] - tb["min"][0], tb["max"][1] - tb["min"][1],
@@ -905,8 +918,18 @@ class App:
             if work:
                 shutil.rmtree(work, ignore_errors=True)
 
+    @staticmethod
+    def _load_snapshot(path):
+        """Open a SolidCraft snapshot and find its backdrop (done in the worker thread)."""
+        im = Image.open(path); im.load(); im = im.convert("RGB")
+        try:
+            mask = sc.snapshot_background_mask(im)
+        except Exception:
+            mask = None
+        return im, mask
+
     def _show_3d(self, im):
-        self._im3d = im
+        self._im3d, self._mask3d = im
         self._fit_3d()
 
     def _fit_3d(self):
@@ -914,7 +937,13 @@ class App:
         if self._im3d is None:
             return
         w = max(300, self.f3d.winfo_width() - 8); h = max(200, self.f3d.winfo_height() - 8)
-        im = self._im3d.copy(); im.thumbnail((w, h), Image.Resampling.LANCZOS)
+        im = self._im3d
+        if self.theme.name == "dark" and self._mask3d is not None:
+            try:
+                im = sc.recolour_snapshot(im, self._mask3d, self.theme.c["preview3d"])
+            except Exception:
+                pass
+        im = im.copy(); im.thumbnail((w, h), Image.Resampling.LANCZOS)
         self._img3d = ImageTk.PhotoImage(im)
         self.c3d.config(image=self._img3d, text="")
 
@@ -1007,7 +1036,7 @@ class App:
             out = sc.save_outputs(res, p, root=sc.output_root(self.s), log=log)
             im = None
             if res.get("snapshot"):
-                im = Image.open(res["snapshot"]); im.load()
+                im = self._load_snapshot(res["snapshot"])
             self.q.put(("done", (res, out, im, key, p)))
         except Exception as ex:
             self.q.put(("fail", str(ex)))

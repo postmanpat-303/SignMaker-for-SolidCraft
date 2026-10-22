@@ -5,7 +5,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/banner-dark.svg">
-    <img src="docs/banner-light.svg" alt="Illustration: an engineering drawing of a two-colour sign plate reading Telefón, titled Sign Maker for SolidCraft" width="100%">
+    <img src="docs/banner-light.svg" alt="Illustration: an engineering drawing of a two-colour sign plate reading Welcome, titled Sign Maker for SolidCraft" width="100%">
   </picture>
 </p>
 
@@ -52,17 +52,17 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/app-window.png" alt="Sign Maker window: Telefón in white on a green plate, with the 2D preview and SolidCraft's 3D preview" width="100%">
+  <img src="docs/screenshots/app-window.png" alt="Sign Maker window: Workshop in cream on a navy plate, with the 2D preview and SolidCraft's 3D preview" width="100%">
   <br>
-  <sub>The main window: wording “Telefón”, white on An Post green. The 3D preview is SolidCraft's render, refreshed automatically.</sub>
+  <sub>The main window: wording “Workshop” in DM Serif Display, cream on navy. The 3D preview is SolidCraft's render, refreshed automatically.</sub>
 </p>
 
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/app-window-dark.png" alt="Sign Maker in the dark theme" width="100%">
+      <img src="docs/screenshots/app-window-dark.png" alt="Sign Maker in the dark theme: Welcome in white on a red plate" width="100%">
       <br>
-      <sub>Dark theme.</sub>
+      <sub>Dark theme: “Welcome” in Bree Serif, white on red.</sub>
     </td>
     <td align="center" width="50%">
       <img src="docs/screenshots/about-window.png" alt="Help, About window: version, credits, Buy me a coffee and thanks to SolidCraft" width="70%">
@@ -72,19 +72,19 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/telefon-dimensions.png" alt="Dimension sheet for a Telefón sign" width="100%">
+      <img src="docs/screenshots/workshop-dimensions.png" alt="Dimension sheet for a Workshop sign: navy plate, cream raised letters, with measurements" width="100%">
       <br>
-      <sub>Dimension sheet for a Telefón sign, saved beside the 3MF.</sub>
+      <sub>Dimension sheet for a “Workshop” sign, saved beside the 3MF.</sub>
     </td>
     <td align="center" width="50%">
-      <img src="docs/screenshots/telephone-3d-preview.png" alt="SolidCraft 3D preview of a raised TELEPHONE sign, white letters on a black plate" width="100%">
+      <img src="docs/screenshots/welcome-3d-preview.png" alt="SolidCraft 3D preview of a raised Welcome sign, white letters on a red plate" width="100%">
       <br>
-      <sub>3D preview of “TELEPHONE” in Times New Roman, rendered by SolidCraft.</sub>
+      <sub>3D preview of “Welcome” in Bree Serif, rendered by SolidCraft.</sub>
     </td>
   </tr>
 </table>
 
-**Make 3MF** also saves a dimension picture (`<Wording> - dimensions.png`). The sheet and the render above are a dimensioned “Telefón” and a raised “TELEPHONE”.
+**Make 3MF** also saves a dimension picture (`<Wording> - dimensions.png`). The sheet and the render above are a dimensioned “Workshop” and a raised “Welcome”.
 
 ## Quick start
 
@@ -218,7 +218,7 @@ The same layout was checked in OrcaSlicer and Bambu Studio. Anycubic Slicer Next
 ## From the command line
 
 ```bash
-python signcore.py "Telefón" --font "Times New Roman"
+python signcore.py "Welcome" --font "Times New Roman"
 python SignMaker.pyw --selftest
 ```
 
