@@ -385,7 +385,7 @@ def _font_dirs_from_registry():
 def _read_names(path):
     from fontTools.ttLib import TTFont, TTCollection
     res = []
-    if path.lower().endswith(".ttc"):
+    if path.lower().endswith((".ttc", ".otc")):     # both are font collections
         coll = TTCollection(path, lazy=True)
         fonts = list(enumerate(coll.fonts))
     else:
@@ -400,13 +400,8 @@ def _read_names(path):
             italic = bool(t["OS/2"].fsSelection & 1)
         except Exception:
             weight, italic = 400, False
-        try:
-            cmap = t.getBestCmap() or {}
-            has_ext = all(ord(c) in cmap for c in "óáéíú")
-        except Exception:
-            has_ext = True
         res.append({"name": full, "family": fam, "style": sub, "path": path, "index": idx,
-                    "weight": weight, "italic": italic, "latin": has_ext})
+                    "weight": weight, "italic": italic})
     return res
 
 def list_fonts(refresh=False, extra_files=()):
@@ -526,7 +521,7 @@ def missing_glyphs(font, text):
 
 def sc_font_arg(font):
     """What to hand SolidCraft's sketch.text font: a file path (or full name for .ttc collections)."""
-    if font["path"].lower().endswith(".ttc"):
+    if font["path"].lower().endswith((".ttc", ".otc")):
         return font["name"]
     return font["path"]
 
@@ -736,15 +731,29 @@ def build_commands(p, font, cap, at, glyph_names=None, plate=True, export=None):
             cmds.append(_cmd("file.export", path=path, format=fmt, bodies=bodies))
     return {"commands": cmds}
 
-def _eval(cli, design, work, cancel=None):
-    jo = os.path.join(work, "eval.json")
+def _run_measure(cli, source, work, json_name, save=None, cancel=None):
+    """One `run` that also writes the measured bodies, so a build needs one CLI call not two.
+
+    The CLI's own usage says `--json-out` on `run` writes "the JSON that run and eval print".
+    Checked against SolidCraft 0.18.3: the bodies and bounding boxes are identical to `eval`.
+    Returns (returncode, output, measurement or None).
+    """
+    jo = os.path.join(work, json_name)
     if os.path.exists(jo):
         os.remove(jo)
-    rc, out = _run([cli, "eval", design, "--json-out", jo], cancel=cancel)
-    if rc != 0 or not os.path.exists(jo):
-        raise RuntimeError("SolidCraft eval failed:\n" + out[-2000:])
-    with open(jo, encoding="utf-8") as f:
-        return json.load(f)
+    args = [cli, "run", source]
+    if save:
+        args += ["--save", save]
+    args += ["--quiet", "--json-out", jo]
+    rc, out = _run(args, cancel=cancel)
+    ev = None
+    if os.path.exists(jo):
+        try:
+            with open(jo, encoding="utf-8") as f:
+                ev = json.load(f)
+        except (OSError, ValueError):
+            ev = None
+    return rc, out, ev
 
 def _text_bodies(ev):
     return [b for b in ev["bodies"] if b["name"] == "Text" or b["name"].startswith("Text (")]
@@ -759,7 +768,29 @@ def new_work_dir(prefix=""):
     os.makedirs(WORK_DIR, exist_ok=True)
     return tempfile.mkdtemp(prefix=prefix + time.strftime("%Y%m%d-%H%M%S-"), dir=WORK_DIR)
 
-def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=True, cancel=None):
+def prune_work_dirs(max_age_days=7):
+    """Delete work folders older than max_age_days, left behind by earlier runs or crashes.
+
+    A folder that is still in use is never touched: only ones older than the cutoff go.
+    Best effort, never raises. Returns how many folders were removed.
+    """
+    cutoff = time.time() - max_age_days * 86400
+    try:
+        entries = os.listdir(WORK_DIR)
+    except OSError:
+        return 0
+    removed = 0
+    for ent in entries:
+        path = os.path.join(WORK_DIR, ent)
+        try:
+            if os.path.isdir(path) and os.path.getmtime(path) < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+def build_sign(p, font, work=None, log=print, want_snapshot=True, cancel=None):
     """Build headless. Returns dict with design, 3mf, stls, snapshot, eval, bboxes, cap height.
     cancel: optional threading.Event. Setting it stops the build and raises Cancelled."""
     cli = find_cli()
@@ -775,10 +806,9 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
     _write_json(s1, build_commands(p, font, cap0, (0, 0), plate=False))
     d1 = os.path.join(work, "measure.solidcraft")
     log("Measuring the text in SolidCraft…")
-    rc, out = _run([cli, "run", s1, "--save", d1, "--quiet"], cancel=cancel)
-    if rc != 0:
+    rc, out, ev = _run_measure(cli, s1, work, "measure-eval.json", save=d1, cancel=cancel)
+    if rc != 0 or ev is None:
         raise RuntimeError("SolidCraft could not set this text in this font:\n" + out[-1500:])
-    ev = _eval(cli, d1, work, cancel)
     tb = _text_bodies(ev)
     if not tb:
         raise RuntimeError("SolidCraft made no text bodies (the font may have no outlines for this wording).")
@@ -804,10 +834,10 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
         sp = os.path.join(work, "probe.json")
         _write_json(sp, build_commands(p, font, cap, at, plate=False))
         dp = os.path.join(work, "probe.solidcraft")
-        rc, out = _run([cli, "run", sp, "--save", dp, "--quiet"], cancel=cancel)
-        if rc != 0:
+        rc, out, ev = _run_measure(cli, sp, work, "probe-eval.json", save=dp, cancel=cancel)
+        if rc != 0 or ev is None:
             raise RuntimeError("SolidCraft build failed:\n" + out[-1500:])
-        return [b["name"] for b in _text_bodies(_eval(cli, dp, work, cancel))]
+        return [b["name"] for b in _text_bodies(ev)]
 
     best = None          # (off-centre error, cap, at, names) of the best single-body build so far
     tries = 0
@@ -816,10 +846,9 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
         s2 = os.path.join(work, "build.json")
         _write_json(s2, build_commands(p, font, cap, at, glyph_names=names, export=exports))
         log("Building the sign in SolidCraft (pass %d)…" % tries)
-        rc, out = _run([cli, "run", s2, "--save", design, "--quiet"], cancel=cancel)
-        if rc != 0:
+        rc, out, ev = _run_measure(cli, s2, work, "build-eval.json", save=design, cancel=cancel)
+        if rc != 0 or ev is None:
             raise RuntimeError("SolidCraft build failed:\n" + out[-1500:])
-        ev = _eval(cli, design, work, cancel)
         tb = _text_bodies(ev)
         if len(tb) != 1:
             # The letters split into different pieces at this size: ask SolidCraft for the real names.
@@ -841,8 +870,7 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
             if best[0] <= 0.1:
                 _, cap, at, names = best
                 _write_json(s2, build_commands(p, font, cap, at, glyph_names=names, export=exports))
-                rc, out = _run([cli, "run", s2, "--save", design, "--quiet"], cancel=cancel)
-                ev = _eval(cli, design, work, cancel) if rc == 0 else None
+                rc, out, ev = _run_measure(cli, s2, work, "build-eval.json", save=design, cancel=cancel)
                 if ev is not None and len(_text_bodies(ev)) == 1:
                     tb = _text_bodies(ev)
                     break
@@ -870,15 +898,65 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, final_exports=
     return res
 
 # ---------------------------------------------------------------- 3MF
+_NS_DECL = re.compile(r'xmlns:([A-Za-z_][\w.\-]*)\s*=\s*"([^"]*)"')
+
+def _register_namespaces(model_xml):
+    """Re-use the source file's namespace prefixes so the rewrite does not rename them.
+
+    ElementTree only writes prefixes it knows about; without this a `p:` or `sc:` prefix is
+    rewritten as `ns0:`, which breaks anything that refers to the old prefix, notably the
+    model's `requiredextensions` attribute. Returns {prefix: uri}.
+    """
+    import xml.etree.ElementTree as ET
+    found = {}
+    for prefix, uri in _NS_DECL.findall(model_xml.decode("utf-8", "replace")):
+        if prefix in ("xml", "xmlns") or not uri:
+            continue
+        try:
+            ET.register_namespace(prefix, uri)
+        except ValueError:          # ns0-ns9 are reserved for ElementTree's own use
+            continue
+        found[prefix] = uri
+    return found
+
+def _parse_transform(value):
+    """A 3MF build-item transform: 12 numbers, row-major, as [m00 m01 m02 m10 ... m30 m31 m32]."""
+    if not value or not value.strip():
+        return None
+    try:
+        nums = [float(x) for x in value.replace(",", " ").split()]
+    except ValueError:
+        return None
+    return nums if len(nums) == 12 else None
+
+def _bake_transform(obj, m, ns):
+    """Apply a build-item transform to an object's vertices, so dropping the item keeps placement.
+
+    A component cannot carry a transform of its own (core spec), so merging two build items
+    into one object has to move the placement into the mesh: [x y z 1] * M.
+    """
+    mesh = obj.find("{%s}mesh" % ns)
+    if mesh is None:
+        return 0
+    moved = 0
+    for v in mesh.iter("{%s}vertex" % ns):
+        x, y, z = float(v.get("x")), float(v.get("y")), float(v.get("z"))
+        v.set("x", "%.6f" % (x * m[0] + y * m[3] + z * m[6] + m[9]))
+        v.set("y", "%.6f" % (x * m[1] + y * m[4] + z * m[7] + m[10]))
+        v.set("z", "%.6f" % (x * m[2] + y * m[5] + z * m[8] + m[11]))
+        moved += 1
+    return moved
+
 def make_multipart_3mf(src, dst, p):
     """Rewrite SolidCraft's 3MF (two separate build items) as ONE object with two parts
     (Plate + Text) so Bambu Studio / OrcaSlicer / Anycubic Slicer Next load it as a single
     multi-part object; keeps coordinates so the text sits exactly on the plate."""
     import xml.etree.ElementTree as ET
     NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
-    ET.register_namespace("", NS)
     with zipfile.ZipFile(src) as z:
         model = z.read("3D/3dmodel.model")
+    ET.register_namespace("", NS)
+    declared = _register_namespaces(model)
     root = ET.fromstring(model)
     res = root.find("{%s}resources" % NS)
     build = root.find("{%s}build" % NS)
@@ -886,8 +964,28 @@ def make_multipart_3mf(src, dst, p):
     byname = {o.get("name"): o for o in objs}
     if "Plate" not in byname or "Text" not in byname:
         raise RuntimeError("3MF export is missing the Plate or Text body")
-    ids = [int(o.get("id")) for o in res]
-    new_id = max(ids) + 1
+    # A build item may place its object with a transform. SolidCraft 0.18.3 exports world
+    # coordinates and no transforms, but bake any that do appear: dropping them would move
+    # the text off the plate.
+    byid = {o.get("id"): o for o in res if o.get("id")}
+    placed = {}
+    for it in build.findall("{%s}item" % NS):
+        m = _parse_transform(it.get("transform"))
+        if m is None:
+            continue
+        oid = it.get("objectid")
+        obj = byid.get(oid)
+        if obj is None or obj.find("{%s}mesh" % NS) is None:
+            continue
+        if oid in placed:
+            if placed[oid] != m:
+                raise RuntimeError("SolidCraft placed one body two different ways; "
+                                   "cannot merge the parts into one object.")
+            continue
+        _bake_transform(obj, m, NS)
+        placed[oid] = m
+    ids = [int(o.get("id")) for o in res if (o.get("id") or "").isdigit()]
+    new_id = max(ids) + 1 if ids else 1
     parent = ET.SubElement(res, "{%s}object" % NS, {"id": str(new_id), "type": "model", "name": p["text"]})
     comps = ET.SubElement(parent, "{%s}components" % NS)
     order = [byname["Plate"], byname["Text"]]
@@ -900,6 +998,23 @@ def make_multipart_3mf(src, dst, p):
     for k, v in (("Title", p["text"]), ("Designer", "Del (postmanpat)"), ("Description", "Two-colour sign made with Sign Maker / SolidCraft")):
         e = ET.Element("{%s}metadata" % NS, {"name": k}); e.text = v
         root.insert(0, e)
+    # ElementTree writes only the namespaces that are used, so a required extension's prefix
+    # can disappear. Ship no dangling reference: keep the prefixes that still exist in the
+    # output tree, drop the rest (and the attribute when nothing is left).
+    req = root.get("requiredextensions")
+    if req:
+        used = set()
+        for el in root.iter():
+            if isinstance(el.tag, str) and el.tag.startswith("{"):
+                used.add(el.tag[1:].split("}", 1)[0])
+            for key in el.attrib:
+                if key.startswith("{"):
+                    used.add(key[1:].split("}", 1)[0])
+        kept = [t for t in req.split() if declared.get(t) in used]
+        if kept:
+            root.set("requiredextensions", " ".join(kept))
+        else:
+            del root.attrib["requiredextensions"]
     xml = ET.tostring(root, encoding="utf-8", xml_declaration=True)
     # Bambu/Orca per-part settings: names, part type and filament (extruder 1 = plate, 2 = text)
     parts = ""
@@ -952,6 +1067,45 @@ def _cam_basis(yaw, pitch):
     u = (r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0])
     return r, u
 
+_ANNOTATION_FACES = {
+    False: (("arial.ttf", "Arial"), ("DejaVuSans.ttf", "DejaVu Sans"),
+            ("LiberationSans-Regular.ttf", "Liberation Sans"), ("Helvetica.ttf", "Helvetica")),
+    True: (("arialbd.ttf", "Arial"), ("DejaVuSans-Bold.ttf", "DejaVu Sans"),
+           ("LiberationSans-Bold.ttf", "Liberation Sans"), ("Helvetica-Bold.ttf", "Helvetica")),
+}
+_ANNOTATION_FONTS = None      # installed fonts, looked up once, and only if the plain names fail
+
+def annotation_font(size, bold=False):
+    """A real TrueType face for the dimension sheet's labels, whatever the OS has installed.
+
+    Arial exists on Windows and DejaVu Sans on most Linux boxes, but neither is guaranteed on
+    macOS, where the old fallback drew 9 px bitmap text whatever size was asked for.
+    """
+    global _ANNOTATION_FONTS
+    from PIL import ImageFont
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    for fname, family in _ANNOTATION_FACES[bold]:
+        for candidate in (fname, os.path.join(windir, "Fonts", fname)):
+            try:
+                return ImageFont.truetype(candidate, size)
+            except Exception:
+                continue
+        if _ANNOTATION_FONTS is None:
+            try:
+                _ANNOTATION_FONTS = list_fonts()
+            except Exception:
+                _ANNOTATION_FONTS = []
+        hit = match_font(_ANNOTATION_FONTS, (family,))
+        if hit:
+            try:
+                return ImageFont.truetype(hit["path"], size, index=hit.get("index", 0))
+            except Exception:
+                continue
+    try:
+        return ImageFont.load_default(size=size)   # Pillow >= 10.1 honours the size
+    except TypeError:
+        return ImageFont.load_default()
+
 def dimension_png(res, p, out_png, log=print):
     """Ortho 3/4 view rendered by SolidCraft, annotated with dimension lines (projected exactly)."""
     from PIL import Image, ImageDraw, ImageFont
@@ -978,14 +1132,7 @@ def dimension_png(res, p, out_png, log=print):
         sx = sum(a * b for a, b in zip(v, r)); sy = sum(a * b for a, b in zip(v, u))
         return (W / 2 + sx / hh * (Hp / 2), Hp / 2 - sy / hh * (Hp / 2))
     d = ImageDraw.Draw(im)
-    def ft(sz, bold=False):
-        for n in (("arialbd.ttf" if bold else "arial.ttf"), "DejaVuSans.ttf"):
-            try:
-                return ImageFont.truetype(n, sz)
-            except Exception:
-                pass
-        return ImageFont.load_default()
-    f, fs = ft(26, True), ft(22)
+    f, fs = annotation_font(26, True), annotation_font(22)
     col = (30, 60, 140)
     def arrow(a, b):
         d.line([a, b], fill=col, width=3)
@@ -1028,7 +1175,7 @@ def dimension_png(res, p, out_png, log=print):
              "Text: %s x %s mm, %s, %s" % (fmt(tmax[0] - tmin[0]), fmt(tmax[1] - tmin[1]), style, p["text_color"]),
              "Font: %s, cap height %s mm" % (res["font"]["name"], fmt(res["cap"])),
              "Margin %s mm%s" % (fmt(float(p["margin"])), (", corners R%s" % fmt(float(p["corner"]))) if float(p.get("corner", 0) or 0) > 0 else "")]
-    tf = ft(30, True)
+    tf = annotation_font(30, True)
     x0, y0 = 30, 24
     widths = [d.textbbox((0, 0), t, font=(tf if i == 0 else fs))[2] for i, t in enumerate(lines)]
     d.rectangle([x0 - 12, y0 - 12, x0 + max(widths) + 14, y0 + 40 + 30 * (len(lines) - 1) + 10], fill=(255, 255, 255), outline=col, width=2)

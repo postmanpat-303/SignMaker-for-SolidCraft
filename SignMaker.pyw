@@ -850,6 +850,11 @@ class App:
     # ---------------- fonts
     def _load_fonts_thread(self):
         try:
+            # Old build folders (Make 3MF used to keep them) are cleaned up while the fonts load.
+            sc.prune_work_dirs()
+        except Exception:
+            pass
+        try:
             fonts = sc.list_fonts(extra_files=self.s.get("extra_fonts", []))
             self.q.put(("fonts", fonts))
         except Exception:
@@ -1124,8 +1129,12 @@ class App:
     def _save_quietly(self):
         try:
             sc.save_settings(self.s)
-        except Exception:
-            pass
+            self._save_failed = False
+        except Exception as ex:
+            # Say it once: silently losing the settings is worse than a line in the status bar.
+            if not getattr(self, "_save_failed", False):
+                self._save_failed = True
+                self.v_status.set("Could not save settings to %s: %s" % (sc.DATA_DIR, ex))
 
     # ---------------- 3D preview
     def _cli_path(self):
@@ -1373,8 +1382,10 @@ class App:
 
     def _worker(self, p, f, key):
         log = lambda m: self.q.put(("status", m))
+        work = None
         try:
-            res = sc.build_sign(p, f, log=log)
+            work = sc.new_work_dir("make-")
+            res = sc.build_sign(p, f, work=work, log=log)
             out = sc.save_outputs(res, p, root=sc.output_root(self.s), log=log)
             im = None
             if res.get("snapshot"):
@@ -1382,6 +1393,10 @@ class App:
             self.q.put(("done", (res, out, im, key, p)))
         except Exception as ex:
             self.q.put(("fail", str(ex)))
+        finally:
+            # The saved files are copies; the build folder is scratch and can go now.
+            if work:
+                shutil.rmtree(work, ignore_errors=True)
 
     def _poll(self):
         try:
