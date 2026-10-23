@@ -21,6 +21,7 @@ settings.json
 fontcache.json
 selftest.log
 selftest_*.png
+tests/.tmp/
 
 # Generated model files, if a build is run inside the repo
 *.3mf

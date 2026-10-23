@@ -55,6 +55,12 @@ jobs:
           python -c "import signcore; print('output', signcore.default_output_dir()); print('config', signcore.DATA_DIR)"
           python -c "import importlib.machinery, importlib.util; loader=importlib.machinery.SourceFileLoader('SignMaker','SignMaker.pyw'); spec=importlib.util.spec_from_loader(loader.name, loader); mod=importlib.util.module_from_spec(spec); loader.exec_module(mod); print('imported', mod.__name__)"
 
+      - name: Unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -v
+
       - name: Headless selftest
         shell: bash
         run: |
