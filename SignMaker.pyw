@@ -13,7 +13,7 @@ try:
 except Exception:  # pragma: no cover - the app still runs on plain ttk
     sv_ttk = None
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 
 APP_NAME = "Sign Maker for SolidCraft"
 AUTHOR = "Del (postmanpat)"
@@ -1232,14 +1232,30 @@ class App:
         self._job = job
         self._set_3d_state("busy")
         p = dict(p, stl=False)  # a preview never needs the STLs
-        threading.Thread(target=self._worker3d, args=(job, p, f), daemon=True).start()
+        threading.Thread(target=self._worker3d, args=(job, p, f, self._snap_size()), daemon=True).start()
 
     def update_preview_now(self):
         if self._after:
             self.root.after_cancel(self._after)
         self.update_preview()
 
-    def _worker3d(self, job, p, f):
+    def _snap_size(self):
+        """The 3D preview is rendered at the size the pane shows it, not at a fixed 1200x700.
+
+        SolidCraft re-evaluates the whole design to make a snapshot, and the picture is scaled
+        down to the pane anyway, so asking for the displayed size gives the same view for less
+        work. Call this on the Tk thread, before starting the build.
+        """
+        try:
+            w = int(self.c3d.winfo_width())
+        except Exception:
+            w = 0
+        if w < 320:                       # not laid out yet: keep the old default
+            return (1200, 700)
+        w = max(480, min(1200, w))
+        return (w, max(1, round(w * 700 / 1200)))
+
+    def _worker3d(self, job, p, f, snap=(1200, 700)):
         work = None
         try:
             work = sc.new_work_dir("preview-")
@@ -1378,14 +1394,14 @@ class App:
             return
         self.busy = True
         self.bmk.config(state="disabled", text="Making…")
-        threading.Thread(target=self._worker, args=(p, f, self.design_key(p, f)), daemon=True).start()
+        threading.Thread(target=self._worker, args=(p, f, self.design_key(p, f), self._snap_size()), daemon=True).start()
 
-    def _worker(self, p, f, key):
+    def _worker(self, p, f, key, snap=(1200, 700)):
         log = lambda m: self.q.put(("status", m))
         work = None
         try:
             work = sc.new_work_dir("make-")
-            res = sc.build_sign(p, f, work=work, log=log)
+            res = sc.build_sign(p, f, work=work, log=log, snapshot_size=snap)
             out = sc.save_outputs(res, p, root=sc.output_root(self.s), log=log)
             im = None
             if res.get("snapshot"):

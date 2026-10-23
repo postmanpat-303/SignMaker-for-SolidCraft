@@ -790,7 +790,7 @@ def prune_work_dirs(max_age_days=7):
             continue
     return removed
 
-def build_sign(p, font, work=None, log=print, want_snapshot=True, cancel=None):
+def build_sign(p, font, work=None, log=print, want_snapshot=True, cancel=None, snapshot_size=(1200, 700)):
     """Build headless. Returns dict with design, 3mf, stls, snapshot, eval, bboxes, cap height.
     cancel: optional threading.Event. Setting it stops the build and raises Cancelled."""
     cli = find_cli()
@@ -892,7 +892,11 @@ def build_sign(p, font, work=None, log=print, want_snapshot=True, cancel=None):
         snap = os.path.join(work, "preview.png")
         log("Rendering 3D preview…")
         cam = {"target": [0, 0, 0.5], "yaw": -0.5, "pitch": 0.75, "distance": max(L * 0.95, H * 2.5)}
-        rc, out = _run([cli, "snapshot", design, "--out", snap, "--no-grid", "--no-axes", "--width", "1200", "--height", "700",
+        # Every snapshot re-evaluates the design, so ask for the size that is actually shown
+        # (a preview pane is a few hundred pixels wide) instead of oversampling to 1200x700.
+        sw, sh = (max(1, int(v)) for v in snapshot_size)
+        rc, out = _run([cli, "snapshot", design, "--out", snap, "--no-grid", "--no-axes",
+                        "--width", str(sw), "--height", str(sh),
                         "--camera", json.dumps(cam)], cancel=cancel)
         res["snapshot"] = snap if rc == 0 and os.path.exists(snap) else None
     return res
