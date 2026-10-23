@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """Sign Maker for SolidCraft - two-colour 3D-print signs. Author: Del (postmanpat)."""
-import os, sys, threading, queue, traceback, subprocess, json, shutil, webbrowser, types, time
+import os, sys, threading, queue, traceback, subprocess, json, shutil, webbrowser, types, time, math
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, colorchooser, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageFilter, ImageTk
 import signcore as sc
 try:
     import sv_ttk  # Sun Valley ttk theme (MIT), bundled with the app
@@ -324,6 +324,183 @@ class Theme:
         s.configure("Status.TFrame", background=c["header"])
         s.configure("Status.TLabel", background=c["header"], foreground=c["muted"], font=f["small"])
         s.configure("Thin.Horizontal.TProgressbar", thickness=4)
+
+
+class SmokeButton(tk.Canvas):
+    """The accent button with a few small smoke wisps curling off its outline.
+
+    Tk cannot draw on top of a ttk widget, so the real ttk.Button sits on a slightly larger
+    canvas and the smoke is drawn in the margin around it. The puffs start at the button's
+    edge, are covered by the button itself, and fade into the card background as they rise.
+    The wisps are hidden until steam() starts a short burst. Keeping the real button means
+    its normal theme, keyboard and disabled states still work.
+    """
+
+    PAD_X = 17
+    PAD_TOP = 32
+    PAD_BOTTOM = 2
+    STAGES = 12
+    TICK_MS = 60
+    FADE_S = 0.65
+    PER_EMITTER = 7
+    # fx, fy (from the button's top-left), drift x, rise, starting phase, sway
+    EMITTERS = ((0.16, 1, -6, 21, 0.05, 3.2),
+                (0.50, 1, 2, 23, 0.41, 3.6),
+                (0.84, 1, 7, 20, 0.73, 3.0),
+                (-0.01, 15, -9, 15, 0.58, 2.8),
+                (1.01, 15, 9, 15, 0.12, 2.8))
+
+    def __init__(self, parent, theme, text, command, style):
+        self.theme = theme
+        super().__init__(parent, borderwidth=0, highlightthickness=0, bd=0)
+        self.button = ttk.Button(self, text=text, command=command, style=style)
+        self._win = self.create_window(self.PAD_X, self.PAD_TOP, window=self.button, anchor="nw")
+        self._button_w = None
+        self._puffs = []
+        self._items = []
+        self._stage_images = []
+        self._job = None
+        self._active = False
+        self._steam_start = 0.0
+        self._steam_until = 0.0
+        self._build_puffs()
+        self.set_theme()
+        self.button.bind("<Configure>", lambda e: self._size(), add="+")
+
+    def _build_puffs(self):
+        for e, (fx, fy, drift, rise, phase, sway) in enumerate(self.EMITTERS):
+            for k in range(self.PER_EMITTER):
+                self._puffs.append(dict(fx=fx, fy=fy, drift=drift, rise=rise, sway=sway, seed=e + k * 0.07,
+                                        base=(phase + k / float(self.PER_EMITTER)) % 1.0, ox=0, oy=0))
+        for _p in self._puffs:
+            self._items.append(self.create_image(-100, -100, anchor="center", state="hidden"))
+
+    def _frame_bg(self):
+        for style in ("TLabelframe", "TFrame", "TLabel"):
+            try:
+                colour = self.theme.style.lookup(style, "background")
+            except tk.TclError:
+                colour = None
+            if colour:
+                return colour
+        return self.theme.c["bg"]
+
+    def _size(self):
+        try:
+            req = max(1, self.button.winfo_reqwidth())
+            h = max(1, self.button.winfo_reqheight())
+        except tk.TclError:
+            return
+        if self._button_w is None or req > self._button_w:
+            self._button_w = req
+        self.configure(width=self._button_w + 2 * self.PAD_X, height=h + self.PAD_TOP + self.PAD_BOTTOM)
+        self.coords(self._win, self.PAD_X, self.PAD_TOP)
+        self.itemconfigure(self._win, width=self._button_w)
+        for p in self._puffs:
+            p["ox"] = self.PAD_X + p["fx"] * self._button_w
+            p["oy"] = self.PAD_TOP + p["fy"]
+
+    @staticmethod
+    def _rgb(colour):
+        colour = colour.lstrip("#")
+        return tuple(int(colour[i:i + 2], 16) for i in (0, 2, 4))
+
+    @staticmethod
+    def _sprite(colour, diameter, alpha):
+        # Draw large and soft, then shrink, so even the little puffs have no hard edge.
+        box = max(10, int(diameter * 4))
+        im = Image.new("RGBA", (box, box), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        c = box / 2.0
+        rx, ry = box * 0.28, box * 0.33
+        d.ellipse((c - rx, c - ry, c + rx, c + ry), fill=colour + (int(alpha * 255),))
+        im = im.filter(ImageFilter.GaussianBlur(box * 0.10))
+        return im.resize((max(1, int(diameter)), max(1, int(diameter))), Image.Resampling.LANCZOS)
+
+    def _make_images(self):
+        dark = self.theme.name == "dark"
+        colour = self._rgb("#f2f7fc" if dark else "#4d5762")
+        images = []
+        for i in range(self.STAGES):
+            t = i / (self.STAGES - 1.0)
+            alpha = (0.40 if dark else 0.30) * (1.0 - t) ** 0.9
+            images.append(ImageTk.PhotoImage(self._sprite(colour, 4.5 + 12.0 * t, alpha)))
+        return images
+
+    def set_theme(self):
+        """Recolour the canvas and rebuild the smoke after a light/dark switch."""
+        self.configure(bg=self._frame_bg())
+        self._stage_images = self._make_images()
+        for item in self._items:
+            self.itemconfigure(item, image=self._stage_images[0])
+        if not self._active:
+            for item in self._items:
+                self.itemconfigure(item, state="hidden")
+        self._button_w = None
+        self.after_idle(self._size)
+
+    def steam(self, duration_ms=4000):
+        """Make the wisps appear for a short burst, then fade away again."""
+        now = time.monotonic()
+        self._steam_start = now
+        self._steam_until = now + max(0.2, duration_ms / 1000.0)
+        if not self._active:
+            self._active = True
+            for item in self._items:
+                self.itemconfigure(item, state="normal")
+            if self._job is None:
+                self._tick()
+
+    def _quiet(self):
+        self._active = False
+        for item in self._items:
+            self.itemconfigure(item, state="hidden")
+        self._job = None
+
+    def _tick(self):
+        self._job = None
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        if not self._active:
+            return
+        now = time.monotonic()
+        if now >= self._steam_until:
+            self._quiet()
+            return
+        delay = self.TICK_MS
+        if self.winfo_viewable() and self._stage_images and self._button_w:
+            # Thin the smoke out over the last moment instead of snapping it off.
+            fade = self._steam_until - now
+            if fade < self.FADE_S:
+                keep = fade / self.FADE_S
+                n = max(1, len(self._items) - 1)
+                for i, item in enumerate(self._items):
+                    rank = ((i * 17) % len(self._items)) / n
+                    self.itemconfigure(item, state="normal" if rank <= keep else "hidden")
+            elapsed = now - self._steam_start
+            for p, item in zip(self._puffs, self._items):
+                a = (elapsed * 0.34 + p["base"]) % 1.0
+                wave = math.sin(a * math.tau * 1.2 + p["seed"] * 9) * p["sway"] * a
+                x = p["ox"] + p["drift"] * a + wave + math.sin(a * math.tau * 2.7 + p["seed"] * 4) * 0.7 * a
+                y = p["oy"] - p["rise"] * a - wave * 0.18
+                stage = min(self.STAGES - 1, int(a * self.STAGES))
+                self.coords(item, x, y)
+                self.itemconfigure(item, image=self._stage_images[stage])
+        else:
+            delay = 250                      # hidden or not laid out yet: do not spin the event loop
+        self._job = self.after(delay, self._tick)
+
+    def destroy(self):
+        if self._job:
+            try:
+                self.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+        super().destroy()
 
 
 class ScrollArea(ttk.Frame):
@@ -757,13 +934,15 @@ class App:
         # --- right: make + paths
         oc = self._card(right, "Make the sign"); oc.grid(row=2, column=0, sticky="we")
         bt = ttk.Frame(oc); bt.grid(row=0, column=0, columnspan=3, sticky="we", pady=(0, 8))
-        self.bmk = ttk.Button(bt, text="Make 3MF", command=self.make,
-                              style="Big.Accent.TButton" if self.theme.sv else "TButton")
-        self.bmk.pack(side="left")
+        self.bmk_box = SmokeButton(bt, self.theme, "Make 3MF", self.make,
+                                   "Big.Accent.TButton" if self.theme.sv else "TButton")
+        self.bmk_box.pack(side="left")
+        self.bmk = self.bmk_box.button
         self.bop = ttk.Button(bt, text="Open folder", command=self.open_folder, state="disabled")
-        self.bop.pack(side="left", padx=(10, 0))
+        self.bop.pack(side="left", padx=(10, 0), anchor="s", pady=(0, SmokeButton.PAD_BOTTOM))
         self.v_stl = tk.BooleanVar(value=self.s.get("stl", False))
-        ttk.Checkbutton(bt, text="Also save separate STLs", variable=self.v_stl).pack(side="left", padx=(16, 0))
+        ttk.Checkbutton(bt, text="Also save separate STLs", variable=self.v_stl).pack(
+            side="left", padx=(16, 0), anchor="s", pady=(0, SmokeButton.PAD_BOTTOM))
         ttk.Label(oc, text="Save folder", style="Muted.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10))
         self.v_out = tk.StringVar(value=sc.output_root(self.s))
         ttk.Entry(oc, textvariable=self.v_out).grid(row=1, column=1, sticky="we", pady=2)
@@ -821,6 +1000,7 @@ class App:
         except tk.TclError:
             frame_bg = c["bg"]
         self.scroll.set_bg(frame_bg)
+        self.bmk_box.set_theme()
         self.f3d.configure(bg=c["preview3d"])
         self.c3d.configure(bg=c["preview3d"], fg=c["muted"], font=self.theme.fonts["large"])
         self._fit_3d()
@@ -1375,6 +1555,7 @@ class App:
     def make(self):
         if self.busy:
             return
+        self.bmk_box.steam(4000)
         self._sync_paths()
         self._cli = None
         try:
@@ -1721,6 +1902,14 @@ def selftest():
     if app.bmk.cget("text") != "Make 3MF":
         raise RuntimeError("Make 3MF label did not come back: %r" % app.bmk.cget("text"))
     log.append("twinkle: back to %r" % app.bmk.cget("text"))
+    # pressing Make starts the steam burst, and it clears itself afterwards
+    app.bmk_box.steam(250)
+    if not app.bmk_box._active:
+        raise RuntimeError("Make button steam did not start")
+    settle(0.75)
+    if app.bmk_box._active or any(app.bmk_box.itemcget(i, "state") != "hidden" for i in app.bmk_box._items):
+        raise RuntimeError("Make button steam did not stop")
+    log.append("steam: started and stopped")
     about = app.show_about(modal=False); root.update()
     log.append("about: %dx%d" % (about.winfo_width(), about.winfo_height()))
     about.close()
