@@ -146,6 +146,50 @@
     .hero { padding-block: 34px 8px; }
   }
 
+  .steam-panel {
+    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(280px, .85fr);
+    gap: clamp(22px, 4vw, 46px); align-items: center;
+    padding: clamp(22px, 4vw, 38px);
+    background:
+      radial-gradient(130% 150% at 100% 0%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 58%),
+      var(--panel);
+    border: 1px solid var(--line); border-radius: calc(var(--radius) + 6px);
+    box-shadow: var(--shadow);
+  }
+  .steam-kicker {
+    margin: 0 0 8px; color: var(--accent); font-size: 13px; font-weight: 650;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+  .steam-copy h2 { margin: 0 0 10px; }
+  .steam-copy > p:not(.steam-kicker):not(.steam-status) {
+    margin: 0; max-width: 48ch; color: var(--muted); font-size: 16px;
+  }
+  .steam-copy strong { color: var(--ink); }
+  .steam-status {
+    min-height: 22px; margin: 18px 0 0; color: var(--accent);
+    font-size: 14.5px; font-weight: 600;
+  }
+  .steam-stage {
+    position: relative; display: flex; align-items: flex-end; justify-content: center;
+    min-height: 168px; padding-bottom: 14px;
+  }
+  #steam-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .steam-button {
+    position: relative; z-index: 1; min-width: 136px; padding: 13px 22px;
+    border: 1px solid transparent; border-radius: 11px; background: var(--accent); color: var(--accent-ink);
+    font: inherit; font-size: 16px; font-weight: 650; line-height: 1.1; cursor: pointer;
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 24%, transparent);
+    transition: transform .12s ease, box-shadow .12s ease, opacity .2s ease;
+  }
+  .steam-button:hover { transform: translateY(-1px); box-shadow: 0 9px 22px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .steam-button:active { transform: translateY(1px); }
+  .steam-button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .steam-button[disabled] { cursor: default; opacity: 1; }
+  @media (max-width: 760px) {
+    .steam-panel { grid-template-columns: 1fr; }
+    .steam-stage { min-height: 148px; }
+  }
+
   footer.site { margin-top: 72px; border-top: 1px solid var(--line); padding: 30px 0 44px; color: var(--muted); font-size: 14.5px; }
   footer.site .wrap { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: center; }
   footer.site a { color: var(--muted); }
@@ -167,6 +211,7 @@
     <nav class="site" aria-label="Page">
       <a href="#download">Download</a>
       <a href="#features">Features</a>
+      <a href="#try">Try it</a>
       <a href="#screenshots">Screenshots</a>
       <a href="#news">What's new</a>
       <a href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft" rel="noopener">GitHub</a>
@@ -260,6 +305,23 @@
     </div>
   </section>
 
+  <section id="try" aria-labelledby="try-title">
+    <div class="wrap">
+      <div class="steam-panel">
+        <div class="steam-copy">
+          <p class="steam-kicker">The Make button</p>
+          <h2 id="try-title">A little steam while it builds</h2>
+          <p>Press <strong>Make 3MF</strong>. A few small wisps curl off the button for about four seconds while the sign is built, then fade away. No confetti, no fuss.</p>
+          <p class="steam-status" id="steam-status" aria-live="polite">Go on — press it.</p>
+        </div>
+        <div class="steam-stage" id="steam-stage">
+          <canvas id="steam-canvas" aria-hidden="true"></canvas>
+          <button class="steam-button" id="steam-button" type="button">Make 3MF</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="screenshots">
     <div class="wrap">
       <h2>Screenshots</h2>
@@ -330,5 +392,154 @@
     <a href="https://buymeacoffee.com/postmanpat" rel="noopener">Buy me a coffee</a>
   </div>
 </footer>
+<script>
+(() => {
+  const stage = document.getElementById("steam-stage");
+  const canvas = document.getElementById("steam-canvas");
+  const button = document.getElementById("steam-button");
+  const status = document.getElementById("steam-status");
+  if (!stage || !canvas || !button || !status) return;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const EMITTERS = [
+    [0.16, 1, -6, 21, 0.05, 3.2],
+    [0.50, 1, 2, 23, 0.41, 3.6],
+    [0.84, 1, 7, 20, 0.73, 3.0],
+    [-0.01, 15, -9, 15, 0.58, 2.8],
+    [1.01, 15, 9, 15, 0.12, 2.8],
+  ];
+  const PER_EMITTER = 7;
+  const DURATION = 4000;
+  const FADE = 0.65;
+  const puffs = [];
+  EMITTERS.forEach((e, ei) => {
+    for (let k = 0; k < PER_EMITTER; k++) {
+      puffs.push({
+        fx: e[0], fy: e[1], drift: e[2], rise: e[3], sway: e[5],
+        base: (e[4] + k / PER_EMITTER) % 1,
+        seed: ei + k * 0.07,
+      });
+    }
+  });
+
+  let cssW = 0, cssH = 0, geom = null, sprite = null, raf = 0, endTimer = 0;
+  let running = false;
+
+  function fit() {
+    cssW = stage.clientWidth;
+    cssH = stage.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.max(1, Math.round(cssW * dpr));
+    canvas.height = Math.max(1, Math.round(cssH * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function measure() {
+    const sr = stage.getBoundingClientRect();
+    const br = button.getBoundingClientRect();
+    geom = { x: br.left - sr.left, y: br.top - sr.top, w: br.width, h: br.height };
+  }
+
+  function makeSprite() {
+    const size = 64;
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    const g = c.getContext("2d");
+    const col = window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "238,245,252" : "77,87,98";
+    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, "rgba(" + col + ",0.85)");
+    grad.addColorStop(0.42, "rgba(" + col + ",0.34)");
+    grad.addColorStop(1, "rgba(" + col + ",0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    return c;
+  }
+
+  function draw(elapsed, remaining) {
+    if (!geom) return;
+    ctx.clearRect(0, 0, cssW, cssH);
+    const fade = remaining < FADE ? remaining / FADE : 1;
+    const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const baseAlpha = dark ? 0.42 : 0.32;
+    for (const p of puffs) {
+      const a = (elapsed * 0.34 + p.base) % 1;
+      const wave = Math.sin(a * Math.PI * 2 * 1.2 + p.seed * 9) * p.sway * a;
+      const x = geom.x + p.fx * geom.w + p.drift * a + wave
+        + Math.sin(a * Math.PI * 2 * 2.7 + p.seed * 4) * 0.7 * a;
+      const y = geom.y + p.fy - p.rise * a - wave * 0.18;
+      const d = 5 + 15 * a;
+      const alpha = baseAlpha * Math.pow(1 - a, 0.9) * fade;
+      if (alpha < 0.006) continue;
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(sprite, x - d / 2, y - d / 2, d, d);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function stop() {
+    running = false;
+    if (raf) cancelAnimationFrame(raf);
+    if (endTimer) clearTimeout(endTimer);
+    raf = 0;
+    endTimer = 0;
+    ctx.clearRect(0, 0, cssW, cssH);
+    button.disabled = false;
+    button.textContent = "Make 3MF";
+    button.removeAttribute("aria-busy");
+  }
+
+  function start() {
+    if (running) return;
+    if (reduce.matches) {
+      status.textContent = "Steam is off because reduced motion is on.";
+      return;
+    }
+    fit();
+    measure();
+    sprite = makeSprite();
+    running = true;
+    button.disabled = true;
+    button.textContent = "Making…";
+    button.setAttribute("aria-busy", "true");
+    status.textContent = "Steam, steam…";
+    const began = performance.now();
+    const tick = (now) => {
+      if (!running) return;
+      const elapsed = (now - began) / 1000;
+      const remaining = DURATION / 1000 - elapsed;
+      if (remaining <= 0) {
+        stop();
+        status.textContent = "That’s it — four seconds of steam.";
+        return;
+      }
+      draw(elapsed, remaining);
+      raf = requestAnimationFrame(tick);
+    };
+    endTimer = window.setTimeout(() => {
+      if (!running) return;
+      stop();
+      status.textContent = "That’s it — four seconds of steam.";
+    }, DURATION);
+    raf = requestAnimationFrame(tick);
+  }
+
+  function relayout() {
+    fit();
+    if (running) measure();
+  }
+
+  window.addEventListener("resize", relayout);
+  window.addEventListener("hashchange", () => {
+    if (location.hash === "#try") start();
+  });
+  button.addEventListener("click", start);
+  fit();
+  if (location.hash === "#try") window.setTimeout(start, 200);
+})();
+</script>
 </body>
 </html>
