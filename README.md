@@ -37,6 +37,10 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
 
 ## What's new
 
+**1.1.4** — the Make 3MF button twinkles when the file is saved:
+
+- **You can see it worked.** Once the 3MF is written, the button flashes **✦ Saved!** a few times and then goes back to normal. It only does this on success.
+
 **1.1.3** — quicker builds, a tidier disk and a sturdier 3MF:
 
 - **Signs build sooner.** Each build asks SolidCraft for the measurements once instead of twice, which takes about a fifth off that part of the work.
