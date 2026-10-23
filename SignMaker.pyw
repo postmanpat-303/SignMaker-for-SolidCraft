@@ -1654,18 +1654,36 @@ def selftest():
     for name in ("dark", "light"):
         app.v_theme.set(name); app._on_theme(); root.update()
     # short-screen layout: compact sizes, and the left column scrolls to the colours
-    app._set_compact(True); root.geometry("1000x640"); root.update()
-    # layout and scrollbar changes are debounced until a resize settles, so let them land
-    t_end = time.time() + 0.6
-    while time.time() < t_end:
-        root.update(); time.sleep(0.02)
+    app._set_compact(True)
+    root.deiconify()          # a withdrawn window ignores geometry requests (seen on Windows)
+    root.update()
+    root.geometry("1000x640")
+
+    def settle(seconds):
+        """Pump the event loop: layout and scrollbar changes are debounced until a resize lands."""
+        end = time.time() + seconds
+        while time.time() < end:
+            root.update(); time.sleep(0.02)
+
+    settle(1.0)
+    if not app.scroll.needed():
+        # How much fits in 640 px depends on the fonts and the display scaling, which differ
+        # per machine (this failed on the Windows runners). Make the window short enough that
+        # the column must scroll, instead of assuming 640 px is short everywhere.
+        for height in (560, 480, 420, 360, 300):
+            root.geometry("1000x%d" % height)
+            settle(0.5)
+            if app.scroll.needed():
+                break
     if not app.scroll.needed() or not app.scroll.vsb.winfo_manager():
-        raise RuntimeError("left column does not scroll on a short window")
+        raise RuntimeError("left column does not scroll on a short window (%s, needs scrolling: %s, scrollbar: %s)"
+                           % (root.geometry(), app.scroll.needed(), bool(app.scroll.vsb.winfo_manager())))
     app.scroll.canvas.yview_moveto(1.0); root.update()
     if app.scroll.canvas.yview()[1] < 0.999:
-        raise RuntimeError("left column cannot reach the bottom")
+        raise RuntimeError("left column cannot reach the bottom (%.3f at %s)"
+                           % (app.scroll.canvas.yview()[1], root.geometry()))
     log.append("compact layout: scrolls %.2f-%.2f, lb %s rows" % (app.scroll.canvas.yview() + (app.lb.cget("height"),)))
-    app._set_compact(False); root.geometry(""); root.update()
+    app._set_compact(False); root.geometry(""); root.update(); root.withdraw()
     about = app.show_about(modal=False); root.update()
     log.append("about: %dx%d" % (about.winfo_width(), about.winfo_height()))
     about.close()
