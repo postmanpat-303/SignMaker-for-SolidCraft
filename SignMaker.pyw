@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Sign Maker for SolidCraft - two-colour 3D-print signs. Author: Del (postmanpat)."""
-import os, sys, threading, queue, traceback, subprocess, json, shutil, webbrowser, types
+import os, sys, threading, queue, traceback, subprocess, json, shutil, webbrowser, types, time
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tkinter as tk
@@ -202,16 +202,30 @@ def place_main_window(root, pref_w=1180, pref_h=800):
     root.minsize(min(900, w), min(600, h))
     x = ax + (aw - w - frame_w) // 2; y = ay + (ah - h - frame_h) // 2
     root.geometry("%dx%d+%d+%d" % (w, h, max(ax, x), max(ay, y)))
-    root.deiconify()
+    root.update_idletasks()              # finish the layout while still hidden
+    # Show it once, already at its final size: maximising after showing makes it jump and repaint.
+    fade = sys.platform == "win32"
+    if fade:
+        try:
+            root.attributes("-alpha", 0.0)   # first paint happens unseen, so no white flash
+        except tk.TclError:
+            fade = False
+    shown = False
     if too_big:
         try:
-            root.state("zoomed")                 # Windows / macOS
+            root.state("zoomed")             # Windows / macOS: maps it maximised
+            shown = True
         except tk.TclError:
             try:
                 root.attributes("-zoomed", True)  # Linux
             except tk.TclError:
                 pass
+    if not shown:
+        root.deiconify()
     root.lift(); root.focus_force()
+    if fade:
+        root.update_idletasks()
+        root.after(40, lambda: root.attributes("-alpha", 1.0))
 
 
 # ---------------------------------------------------------------- theme
@@ -328,26 +342,63 @@ class ScrollArea(ttk.Frame):
         self.vsb.grid(row=0, column=1, sticky="ns", padx=(6, 0))
         self.vsb.grid_remove()
         self.rowconfigure(0, weight=1); self.columnconfigure(0, weight=1)
-        self.inner.bind("<Configure>", lambda e: self.refresh())
-        self.canvas.bind("<Configure>", lambda e: self._update_bar())
+        # These fire a lot: on every step of a window resize, and the inner frame on every scroll
+        # (it moves). Each handler only touches widgets when a size really changed, otherwise a
+        # resize drag turns into a stream of relayouts and the window tears.
+        self._req = None            # inner frame's requested size last applied to the canvas
+        self._item_w = None         # width last given to the inner frame's canvas item
+        self._bar_after = None
+        self._wheel = 0             # wheel steps waiting to be applied
+        self._wheel_after = None
+        self.inner.bind("<Configure>", self._on_inner)
+        self.canvas.bind("<Configure>", self._on_canvas)
 
-    def refresh(self):
-        w, h = self.inner.winfo_reqwidth(), self.inner.winfo_reqheight()
+    def _on_inner(self, e=None):
+        req = (self.inner.winfo_reqwidth(), self.inner.winfo_reqheight())
+        if req == self._req:
+            return                  # it only moved (scrolling) or was stretched to the canvas width
+        self._req = req
+        w, h = req
         # Ask for the whole column: on a big screen the window opens tall enough and never scrolls.
         self.canvas.configure(width=w, height=h, scrollregion=(0, 0, w, h))
+        self._apply_width()
+        self._schedule_bar()
+
+    def _on_canvas(self, e=None):
+        self._apply_width()
+        self._schedule_bar()
+
+    def _apply_width(self):
+        w = max(self.canvas.winfo_width(), self.inner.winfo_reqwidth())
+        if w != self._item_w:
+            self._item_w = w
+            self.canvas.itemconfigure(self._win, width=w)
+
+    def refresh(self):
+        """Apply a change of the column's content now (used after the layout mode changes)."""
+        self._on_inner()
         self._update_bar()
 
     def needed(self):
         return self.inner.winfo_reqheight() > self.canvas.winfo_height() + 1
 
+    def _schedule_bar(self):
+        # Showing or hiding the scrollbar changes the column width and so relayouts the whole
+        # window: wait until a resize drag settles.
+        if self._bar_after:
+            self.after_cancel(self._bar_after)
+        self._bar_after = self.after(150, self._update_bar)
+
     def _update_bar(self):
-        self.canvas.itemconfigure(self._win, width=max(self.canvas.winfo_width(), self.inner.winfo_reqwidth()))
-        if self.needed():
-            if not self.vsb.winfo_manager():
-                self.vsb.grid()
-        else:
-            if self.vsb.winfo_manager():
-                self.vsb.grid_remove()
+        self._bar_after = None
+        if self.canvas.winfo_height() <= 1:
+            return
+        over = self.inner.winfo_reqheight() - self.canvas.winfo_height()
+        shown = bool(self.vsb.winfo_manager())
+        if not shown and over > 1:
+            self.vsb.grid()
+        elif shown and over <= -4:              # a little slack so it does not flicker at the edge
+            self.vsb.grid_remove()
             self.canvas.yview_moveto(0)
 
     def contains(self, w):
@@ -355,8 +406,17 @@ class ScrollArea(ttk.Frame):
         return w is not None and (str(w) + ".").startswith(p)
 
     def scroll(self, units):
-        if units and self.needed():
-            self.canvas.yview_scroll(units, "units")
+        # Wheels can send many events per frame (touchpads, fast spins): add them up and scroll once.
+        if not units:
+            return
+        self._wheel += units
+        if self._wheel_after is None:
+            self._wheel_after = self.after_idle(self._do_scroll)
+
+    def _do_scroll(self):
+        n, self._wheel, self._wheel_after = self._wheel, 0, None
+        if n and self.needed():
+            self.canvas.yview_scroll(n, "units")
 
     def set_bg(self, colour):
         self.canvas.configure(bg=colour)
@@ -483,6 +543,11 @@ class App:
         self._tight = False          # very short screen: smaller 2D preview still
         self._max2d_h = 360          # tallest the 2D preview may be drawn
         self._layout_after = None
+        self._last_work = None
+        self._2d_after = None
+        self._2d_limit = 1100        # widest the 2D preview may be for the current plate
+        self._fit_key = None         # (image, theme, size) the 3D view was last fitted for
+        self._dark3d = None          # (image, recoloured copy) for the dark theme
         self.theme = Theme(root)
         self.theme.apply(self.s.get("theme", "light"))
         root.title(APP_NAME)
@@ -490,7 +555,11 @@ class App:
         self._build_ui()
         self._apply_widget_colours()
         self._update_layout()
-        root.bind("<Configure>", self._on_root_configure, add="+")
+        # A binding on the root also runs for every child widget's <Configure> (the toplevel is
+        # in their bind tags), dozens per resize step. Use a tag only the root window has.
+        root.bindtags(("SignMakerTop",) + root.bindtags())
+        root.bind_class("SignMakerTop", "<Configure>", self._on_root_configure)
+        self._last_geom = None
         self._refresh_cli_field()
         self._set_3d_state("idle")
         if selftest:
@@ -893,14 +962,8 @@ class App:
             self.v_info.set("Pick a font"); return
         try:
             w = self.c2d.winfo_width()
-            w = 760 if w < 50 else max(200, min(w, 1100))
-            # Keep tall plates from pushing the rest of the window off a short screen.
-            try:
-                L, H = float(p["length"]), float(p["height"])
-                if L > 0 and H > 0:
-                    w = max(200, min(w, int((self._max2d_h - 60) * L / H) + 60))
-            except (TypeError, ValueError, KeyError):
-                pass
+            self._2d_limit = self._limit_2d(p)
+            w = self._target_2d(w)
             self._w2d = w
             bg = tuple(int(self.theme.c["preview"][i:i + 2], 16) for i in (1, 3, 5))
             img, info = sc.preview_image(p, f, width_px=w, bg=bg)
@@ -920,10 +983,46 @@ class App:
         self.save_settings_soon(p)
         self._design_changed(p, f)
 
+    def _limit_2d(self, p):
+        """Widest the 2D preview may be, so a tall plate does not push the rest off a short screen."""
+        try:
+            L, H = float(p["length"]), float(p["height"])
+            if L > 0 and H > 0:
+                return max(200, min(1100, int((self._max2d_h - 60) * L / H) + 60))
+        except (TypeError, ValueError, KeyError):
+            pass
+        return 1100
+
+    def _target_2d(self, avail):
+        w = 760 if avail < 50 else max(200, min(avail, 1100))
+        return max(200, min(w, self._2d_limit))
+
     def _on_2d_resize(self, e):
-        w = max(200, min(e.width, 1100))
-        if abs(w - self._w2d) > 2:
-            self.schedule(80)
+        # Redraw only when the picture would really change size, and only once a resize settles.
+        if abs(self._target_2d(e.width) - self._w2d) <= 2:
+            return
+        if self._2d_after:
+            self.root.after_cancel(self._2d_after)
+        self._2d_after = self.root.after(180, self._redraw_2d)
+
+    def _redraw_2d(self):
+        """Re-render the 2D picture for a new size. The design is unchanged: no info, save or 3D work."""
+        self._2d_after = None
+        if not self.fonts or self._after:          # a full update is already on its way
+            return
+        try:
+            p = self.params(); f, _ = self.current_font()
+            if not f:
+                return
+            w = self._target_2d(self.c2d.winfo_width())
+            if abs(w - self._w2d) <= 2:
+                return
+            bg = tuple(int(self.theme.c["preview"][i:i + 2], 16) for i in (1, 3, 5))
+            img, _ = sc.preview_image(p, f, width_px=w, bg=bg)
+        except Exception:
+            self.schedule(0); return
+        self._w2d = w
+        self._img2d = ImageTk.PhotoImage(img); self.c2d.config(image=self._img2d)
 
     # ---------------- fitting the screen
     def _on_wheel(self, e):
@@ -953,9 +1052,25 @@ class App:
     def _on_root_configure(self, e):
         if e.widget is not self.root:
             return
+        size = (e.width, e.height)
+        if self._last_geom is not None and self._last_geom[0] == size:
+            # Only moved. Re-check (once it settles) only if that may have put it on another monitor.
+            if self._layout_after is None:
+                self._layout_after = self.root.after(400, self._check_monitor)
+            return
+        self._last_geom = (size, None)
         if self._layout_after:
             self.root.after_cancel(self._layout_after)
-        self._layout_after = self.root.after(300, self._update_layout)
+        self._layout_after = self.root.after(200, self._update_layout)
+
+    def _check_monitor(self):
+        self._layout_after = None
+        try:
+            wa = work_area(self.root)
+        except Exception:
+            return
+        if wa != self._last_work:
+            self._update_layout()
 
     def _update_layout(self):
         """Pick the normal or compact layout from the screen the window is on and the window size.
@@ -964,7 +1079,8 @@ class App:
         self._layout_after = None
         try:
             scale = screen_scale(self.root)
-            work_h = work_area(self.root)[3] / scale
+            self._last_work = work_area(self.root)
+            work_h = self._last_work[3] / scale
             win_h = self.root.winfo_height() / scale if self.root.winfo_ismapped() else None
         except Exception:
             return
@@ -1050,7 +1166,7 @@ class App:
                 ph = "The 3D preview appears here."
             else:
                 ph = "Press Refresh 3D preview to see the sign in 3D."
-            self.c3d.configure(image="", text=ph)
+            self._fit_key = None; self.c3d.configure(image="", text=ph)
 
     def _design_changed(self, p, f):
         key = self.design_key(p, f)
@@ -1148,6 +1264,7 @@ class App:
 
     def _show_3d(self, im):
         self._im3d, self._mask3d = im
+        self._fit_key = None
         self._fit_3d()
 
     def _fit_3d(self):
@@ -1155,12 +1272,19 @@ class App:
         if self._im3d is None:
             return
         w = max(300, self.f3d.winfo_width() - 8); h = max(200, self.f3d.winfo_height() - 8)
+        key = (id(self._im3d), self.theme.name, self.theme.c["preview3d"], w, h)
+        if key == self._fit_key:
+            return                                  # already showing exactly this
+        self._fit_key = key
         im = self._im3d
         if self.theme.name == "dark" and self._mask3d is not None:
-            try:
-                im = sc.recolour_snapshot(im, self._mask3d, self.theme.c["preview3d"])
-            except Exception:
-                pass
+            if self._dark3d is None or self._dark3d[0] is not im or self._dark3d[1] != self.theme.c["preview3d"]:
+                try:
+                    self._dark3d = (im, self.theme.c["preview3d"],
+                                    sc.recolour_snapshot(im, self._mask3d, self.theme.c["preview3d"]))
+                except Exception:
+                    self._dark3d = (im, self.theme.c["preview3d"], im)
+            im = self._dark3d[2]
         im = im.copy(); im.thumbnail((w, h), Image.Resampling.LANCZOS)
         self._img3d = ImageTk.PhotoImage(im)
         self.c3d.config(image=self._img3d, text="")
@@ -1170,7 +1294,7 @@ class App:
             return
         if self._fit_after:
             self.root.after_cancel(self._fit_after)
-        self._fit_after = self.root.after(120, self._fit_3d)
+        self._fit_after = self.root.after(180, self._fit_3d)
 
     def _on_auto3d(self):
         self.s["auto_preview"] = bool(self.v_auto3d.get())
@@ -1500,6 +1624,10 @@ def selftest():
         app.v_theme.set(name); app._on_theme(); root.update()
     # short-screen layout: compact sizes, and the left column scrolls to the colours
     app._set_compact(True); root.geometry("1000x640"); root.update()
+    # layout and scrollbar changes are debounced until a resize settles, so let them land
+    t_end = time.time() + 0.6
+    while time.time() < t_end:
+        root.update(); time.sleep(0.02)
     if not app.scroll.needed() or not app.scroll.vsb.winfo_manager():
         raise RuntimeError("left column does not scroll on a short window")
     app.scroll.canvas.yview_moveto(1.0); root.update()
