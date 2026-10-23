@@ -18,6 +18,7 @@
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <a href="https://github.com/tangency-labs/solidcraft"><img src="https://img.shields.io/badge/SolidCraft-companion-1F4E79" alt="SolidCraft companion"></a>
   <img src="https://img.shields.io/badge/license-MIT-16a34a" alt="MIT licence">
+  <a href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases/latest"><img src="https://img.shields.io/github/v/release/postmanpat-303/SignMaker-for-SolidCraft?label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/3MF-two--colour-C8102E" alt="3MF two-colour">
 </p>
 
@@ -33,6 +34,18 @@
 Sign Maker builds a small 3D-print nameplate: a plate with one line of text centred on it. You see the sign in 2D immediately, and in 3D a moment later: the 3D preview rebuilds itself in the background about a second after you stop typing or changing anything. **Make 3MF** writes one file with two parts, Plate on filament 1 and Text on filament 2, plus a dimension picture and the `.solidcraft` design.
 
 It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraft's headless `solidcraft-cli`. The 2D preview does not need it.
+
+## What's new
+
+**1.1.3** — quicker builds, a tidier disk and a sturdier 3MF:
+
+- **Signs build sooner.** Each build asks SolidCraft for the measurements once instead of twice, which takes about a fifth off that part of the work.
+- **Nothing piles up.** Making a sign no longer leaves a scratch folder behind, and old ones are cleaned up automatically.
+- **The letters stay on the plate.** If a future SolidCraft places the two parts differently, Sign Maker now follows that instead of dropping it.
+- **Better dimension sheets on macOS**, where the labels used to come out as tiny bitmap text.
+- **The 3D preview renders at the size it is shown**, which saves a little time on long wording.
+
+Older versions are in the [release notes](https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases).
 
 ## What it does
 
@@ -126,9 +139,9 @@ Engraved style cuts the letters into the plate and leaves a flush inlay of the t
 
 ## Downloads
 
-Standalone bundles are attached to a GitHub Release when a tag `v*` is pushed. They are not published by this README on its own. Until a release exists, use the source launchers above.
+Every version is published as a GitHub Release with standalone bundles for Windows, macOS and Linux.
 
-[Releases](https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases)
+**[Download the latest release](https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases/latest)** · [all releases](https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases)
 
 ### Windows installer
 
