@@ -526,6 +526,7 @@ class App:
         self._shown = []
         self.q = queue.Queue()
         self.busy = False            # Make 3MF running
+        self._sparkle_gen = 0        # bumps to stop a twinkle on the Make button
         self.last_folder = None
         self._after = None
         self._cli = None
@@ -1393,8 +1394,37 @@ class App:
         if not f:
             return
         self.busy = True
+        self._sparkle_gen += 1               # stop a twinkle that is still running
         self.bmk.config(state="disabled", text="Making…")
         threading.Thread(target=self._worker, args=(p, f, self.design_key(p, f), self._snap_size()), daemon=True).start()
+
+    # The twinkle below cycles glyphs rather than growing the label, so the "Open folder"
+    # button beside it does not shift while it plays.
+    SPARKLE_MS = 140
+    SPARKLE_FRAMES = ("✦ Saved!", "✧ Saved!", "✦ Saved!", "✧ Saved!")
+
+    def _sparkle_saved(self):
+        """Twinkle the Make 3MF button once the file is on disk, then put its label back.
+
+        Decoration only: if anything here fails, the save the user just got is unaffected.
+        """
+        self._sparkle_gen += 1
+        run = self._sparkle_gen
+        frames = self.SPARKLE_FRAMES + ("Make 3MF",)
+
+        def step(i):
+            if run != self._sparkle_gen:
+                return                       # a newer twinkle, or a new build, took over
+            try:
+                if self.busy:
+                    return                   # "Making…" owns the button now
+                self.bmk.config(text=frames[i])
+            except tk.TclError:
+                return                       # the window closed mid-twinkle
+            if i + 1 < len(frames):
+                self.root.after(self.SPARKLE_MS, lambda: step(i + 1))
+
+        step(0)
 
     def _worker(self, p, f, key, snap=(1200, 700)):
         log = lambda m: self.q.put(("status", m))
@@ -1473,6 +1503,8 @@ class App:
                 res["cap"])
             self.last_folder = out["folder"]; self.bop.config(state="normal")
             self.v_status.set("Saved %s.3mf in %s  ·  %s" % (out["base"], out["folder"], msg))
+            if out.get("3mf") and os.path.exists(out["3mf"]):
+                self._sparkle_saved()
 
     # ---------------- folders and paths
     @staticmethod
@@ -1684,6 +1716,11 @@ def selftest():
                            % (app.scroll.canvas.yview()[1], root.geometry()))
     log.append("compact layout: scrolls %.2f-%.2f, lb %s rows" % (app.scroll.canvas.yview() + (app.lb.cget("height"),)))
     app._set_compact(False); root.geometry(""); root.update(); root.withdraw()
+    # the Make button twinkles after a save and must come back to its own label
+    app._sparkle_saved(); settle(1.0)
+    if app.bmk.cget("text") != "Make 3MF":
+        raise RuntimeError("Make 3MF label did not come back: %r" % app.bmk.cget("text"))
+    log.append("twinkle: back to %r" % app.bmk.cget("text"))
     about = app.show_about(modal=False); root.update()
     log.append("about: %dx%d" % (about.winfo_width(), about.winfo_height()))
     about.close()
