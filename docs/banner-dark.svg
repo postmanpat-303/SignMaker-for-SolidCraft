@@ -5,19 +5,19 @@
   <rect x="18" y="18" width="1164" height="464" fill="none" stroke="#9ec4ea" stroke-width="2.2"/>
   <rect x="24" y="24" width="1152" height="452" fill="none" stroke="#3d6284" stroke-width="0.8"/>
   <!-- title -->
-  <text x="56" y="92" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" letter-spacing="3.2">TWO-COLOUR 3D-PRINT SIGNS</text>
+  <text x="56" y="92" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="15" letter-spacing="3.2">TYPE  ·  PICK A FONT  ·  PRINT</text>
   <text x="54" y="148" fill="#e8f1fb" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="46" font-weight="700">Sign Maker</text>
   <text x="56" y="190" fill="#e8f1fb" font-family="Georgia, Liberation Serif, Times New Roman, serif" font-size="28">for SolidCraft</text>
   <line x1="56" y1="212" x2="250" y2="212" stroke="#8ec5ff" stroke-width="2"/>
-  <text x="56" y="248" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="16">Plate 63 × 15 × 0.8 mm</text>
-  <text x="56" y="274" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="16">Text raised 1.0 mm · centred</text>
-  <text x="56" y="300" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="16">One 3MF · two filaments</text>
+  <text x="56" y="248" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="16">One line, any font</text>
+  <text x="56" y="274" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="16">Ready-to-slice 3MF</text>
+  <text x="56" y="300" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="16">Plate and text, two filaments</text>
   <!-- filament chips -->
   <rect x="56" y="328" width="18" height="18" fill="#f7f8fa" stroke="#6e7a88"/>
   <text x="82" y="342" fill="#e8f1fb" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="14">1  Plate</text>
   <rect x="168" y="328" width="18" height="18" fill="#121212"/>
   <text x="194" y="342" fill="#e8f1fb" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="14">2  Text</text>
-  <text x="56" y="430" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" letter-spacing="1.4">ILLUSTRATION  ·  NOT A SCREENSHOT</text>
+  <text x="56" y="430" fill="#b7cbe0" font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="13" letter-spacing="1.4">SEE IT IN 3D BEFORE YOU PRINT</text>
   <!-- plate -->
   <polygon points="638.4,197.5 880.9,337.5 880.9,315.5 638.4,175.5" fill="#d8dee6" stroke="#6e7a88" stroke-width="1.2" stroke-linejoin="round"/>
   <polygon points="941.6,302.5 880.9,337.5 880.9,315.5 941.6,280.5" fill="#c5ccd4" stroke="#6e7a88" stroke-width="1.2" stroke-linejoin="round"/>
@@ -59,7 +59,7 @@
   <g font-family="Segoe UI, Liberation Sans, DejaVu Sans, sans-serif" font-size="12" fill="#b7cbe0">
     <rect x="860" y="430" width="290" height="42" fill="none" stroke="#3d6284"/>
     <text x="874" y="448">DWG  SIGN-01</text>
-    <text x="874" y="464">SCALE  ILLUSTRATION</text>
+    <text x="874" y="464">SCALE  ISOMETRIC</text>
     <text x="1020" y="448">REV  A</text>
     <text x="1020" y="464">3MF  2-COLOUR</text>
   </g>
