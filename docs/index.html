@@ -171,7 +171,7 @@
   }
   .steam-stage {
     position: relative; display: flex; align-items: flex-end; justify-content: center;
-    min-height: 168px; padding-bottom: 14px;
+    min-height: 132px; padding-bottom: 12px;
   }
   #steam-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .steam-button {
@@ -187,7 +187,7 @@
   .steam-button[disabled] { cursor: default; opacity: 1; }
   @media (max-width: 760px) {
     .steam-panel { grid-template-columns: 1fr; }
-    .steam-stage { min-height: 148px; }
+    .steam-stage { min-height: 120px; }
   }
 
   footer.site { margin-top: 72px; border-top: 1px solid var(--line); padding: 30px 0 44px; color: var(--muted); font-size: 14.5px; }
@@ -405,11 +405,11 @@
 
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
   const EMITTERS = [
-    [0.16, 1, -6, 21, 0.05, 3.2],
-    [0.50, 1, 2, 23, 0.41, 3.6],
-    [0.84, 1, 7, 20, 0.73, 3.0],
-    [-0.01, 15, -9, 15, 0.58, 2.8],
-    [1.01, 15, 9, 15, 0.12, 2.8],
+    [0.16, 1, -7, 27, 0.05, 3.6],
+    [0.50, 1, 2, 30, 0.41, 4.0],
+    [0.84, 1, 8, 26, 0.73, 3.4],
+    [-0.01, 15, -10, 19, 0.58, 3.0],
+    [1.01, 15, 10, 19, 0.12, 3.0],
   ];
   const PER_EMITTER = 7;
   const DURATION = 4000;
@@ -464,14 +464,14 @@
     ctx.clearRect(0, 0, cssW, cssH);
     const fade = remaining < FADE ? remaining / FADE : 1;
     const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const baseAlpha = dark ? 0.42 : 0.32;
+    const baseAlpha = dark ? 0.46 : 0.36;
     for (const p of puffs) {
       const a = (elapsed * 0.34 + p.base) % 1;
       const wave = Math.sin(a * Math.PI * 2 * 1.2 + p.seed * 9) * p.sway * a;
       const x = geom.x + p.fx * geom.w + p.drift * a + wave
         + Math.sin(a * Math.PI * 2 * 2.7 + p.seed * 4) * 0.7 * a;
       const y = geom.y + p.fy - p.rise * a - wave * 0.18;
-      const d = 5 + 15 * a;
+      const d = 6 + 16 * a;
       const alpha = baseAlpha * Math.pow(1 - a, 0.9) * fade;
       if (alpha < 0.006) continue;
       ctx.globalAlpha = alpha;
