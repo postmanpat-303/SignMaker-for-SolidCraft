@@ -190,6 +190,26 @@
     .steam-stage { min-height: 120px; }
   }
 
+  .video-panel {
+    padding: clamp(18px, 3vw, 28px);
+    background:
+      radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 60%),
+      var(--panel);
+    border: 1px solid var(--line); border-radius: calc(var(--radius) + 6px);
+    box-shadow: var(--shadow);
+  }
+  .video-frame {
+    position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden;
+    border-radius: var(--radius); border: 1px solid var(--line); background: #000;
+  }
+  .video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .video-meta {
+    display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: space-between;
+    margin-top: 14px; color: var(--muted); font-size: 14.5px;
+  }
+  .video-meta a { font-weight: 650; text-decoration: none; white-space: nowrap; }
+  .video-meta a:hover { text-decoration: underline; }
+
   footer.site { margin-top: 72px; border-top: 1px solid var(--line); padding: 30px 0 44px; color: var(--muted); font-size: 14.5px; }
   footer.site .wrap { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: center; }
   footer.site a { color: var(--muted); }
@@ -209,6 +229,7 @@
   <div class="wrap">
     <a class="brand" href="#top"><img src="icon.png" alt="" width="26" height="26">Sign Maker</a>
     <nav class="site" aria-label="Page">
+      <a href="#video">Video</a>
       <a href="#download">Download</a>
       <a href="#features">Features</a>
       <a href="#try">Try it</a>
@@ -237,6 +258,22 @@
       </picture>
     </div>
   </div>
+
+  <section id="video" aria-labelledby="video-title">
+    <div class="wrap">
+      <h2 id="video-title">Watch it in action</h2>
+      <p class="sub">Type it, print it: a two-colour 3D-print sign in one click, from the first letter to the slicer.</p>
+      <div class="video-panel">
+        <div class="video-frame">
+          <iframe src="https://www.youtube-nocookie.com/embed/CMkJDht1Buw?rel=0" title="Sign Maker: Type It, Print It. Two-Colour 3D-Print Signs in One Click" loading="lazy" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+        </div>
+        <div class="video-meta">
+          <span>Sign Maker: Type It, Print It. Two-Colour 3D-Print Signs in One Click</span>
+          <a href="https://youtu.be/CMkJDht1Buw" rel="noopener">▶ Watch on YouTube</a>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <section id="download">
     <div class="wrap">

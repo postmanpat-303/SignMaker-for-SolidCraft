@@ -33,6 +33,12 @@
 </p>
 
 <p align="center">
+  <a href="https://youtu.be/CMkJDht1Buw"><img src="https://img.youtube.com/vi/CMkJDht1Buw/maxresdefault.jpg" alt="Sign Maker: Type It, Print It. Two-Colour 3D-Print Signs in One Click (YouTube video)" width="720"></a>
+  <br>
+  <a href="https://youtu.be/CMkJDht1Buw"><strong>▶ Watch the demo on YouTube</strong></a>
+</p>
+
+<p align="center">
   Unofficial community add-on for <a href="https://github.com/tangency-labs/solidcraft">SolidCraft</a>.
   Not affiliated with or endorsed by the SolidCraft maintainers.
 </p>
