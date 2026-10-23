@@ -13,7 +13,7 @@ try:
 except Exception:  # pragma: no cover - the app still runs on plain ttk
     sv_ttk = None
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 APP_NAME = "Sign Maker for SolidCraft"
 AUTHOR = "Del (postmanpat)"
@@ -123,8 +123,27 @@ def centre_window(win, parent=None):
 
 
 def work_area(win):
-    """Usable screen area (x, y, w, h), leaving out the Windows taskbar."""
+    """Usable area (x, y, w, h) of the screen the window is on, leaving out the Windows taskbar."""
     if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                            ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+            u = ctypes.windll.user32
+            u.MonitorFromWindow.restype = wintypes.HANDLE
+            u.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+            u.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MONITORINFO)]
+            hwnd = int(win.wm_frame(), 16) if win.winfo_ismapped() else win.winfo_id()
+            mon = u.MonitorFromWindow(hwnd, 2)          # MONITOR_DEFAULTTONEAREST
+            mi = MONITORINFO(); mi.cbSize = ctypes.sizeof(MONITORINFO)
+            if mon and u.GetMonitorInfoW(mon, ctypes.byref(mi)):
+                r = mi.rcWork
+                return r.left, r.top, r.right - r.left, r.bottom - r.top
+        except Exception:
+            pass
         try:
             import ctypes
             from ctypes import wintypes
@@ -135,6 +154,41 @@ def work_area(win):
             pass
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
     return 0, 0, sw, sh - 60
+
+
+_SCREEN_DPI = None   # measured before the app sets its own tk scaling
+
+
+def remember_screen_dpi(root):
+    global _SCREEN_DPI
+    try:
+        _SCREEN_DPI = float(root.winfo_fpixels("1i"))
+    except Exception:
+        _SCREEN_DPI = None
+
+
+def screen_scale(win):
+    """How many screen pixels make one layout pixel (1.0 at 100 %, 1.5 at 150 % display scaling).
+    Windows reports 96 dpi to apps it scales itself, so this is 1.0 for them: their sizes are
+    already logical pixels."""
+    if sys.platform == "darwin":
+        return 1.0                                   # Tk already works in points there
+    dpi = None
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            hwnd = int(win.wm_frame(), 16) if win.winfo_ismapped() else win.winfo_id()
+            dpi = float(ctypes.windll.user32.GetDpiForWindow(hwnd)) or None
+        except Exception:
+            dpi = None
+    if dpi is None:
+        dpi = _SCREEN_DPI
+    if not dpi:
+        return 1.0
+    return max(1.0, min(3.0, dpi / 96.0))
+
+
+COMPACT_BELOW = 860   # work-area height (layout pixels) under which the compact layout is used
 
 
 def place_main_window(root, pref_w=1180, pref_h=800):
@@ -169,6 +223,7 @@ class Theme:
         self.name = "light"
         self.style = ttk.Style(root)
         self.sv = sv_ttk is not None
+        self.compact = False
         fams = {f.lower(): f for f in tkfont.families(root)}
 
         def pick(*names):
@@ -232,7 +287,7 @@ class Theme:
             self.style.configure(".", background=self.c["bg"], foreground=self.c["fg"], font=self.fonts["body"])
         c, f, s = self.c, self.fonts, self.style
         s.configure("TLabelframe.Label", font=f["strong"], foreground=c["fg"])
-        s.configure("TLabelframe", padding=(14, 8, 14, 12))
+        s.configure("TLabelframe", padding=(12, 4, 12, 7) if self.compact else (14, 8, 14, 12))
         s.configure("Muted.TLabel", foreground=c["muted"], font=f["small"])
         s.configure("Info.TLabel", foreground=c["accent"], font=f["body"])
         s.configure("Ok.TLabel", foreground=c["ok"], font=f["small"])
@@ -255,6 +310,56 @@ class Theme:
         s.configure("Status.TFrame", background=c["header"])
         s.configure("Status.TLabel", background=c["header"], foreground=c["muted"], font=f["small"])
         s.configure("Thin.Horizontal.TProgressbar", thickness=4)
+
+
+class ScrollArea(ttk.Frame):
+    """A column that scrolls when the window is too short for it. The scrollbar only shows when
+    it is needed. The mouse wheel is handled by App._on_wheel."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, width=10, height=10,
+                                yscrollincrement=24)
+        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.inner = ttk.Frame(self.canvas)
+        self._win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vsb.grid(row=0, column=1, sticky="ns", padx=(6, 0))
+        self.vsb.grid_remove()
+        self.rowconfigure(0, weight=1); self.columnconfigure(0, weight=1)
+        self.inner.bind("<Configure>", lambda e: self.refresh())
+        self.canvas.bind("<Configure>", lambda e: self._update_bar())
+
+    def refresh(self):
+        w, h = self.inner.winfo_reqwidth(), self.inner.winfo_reqheight()
+        # Ask for the whole column: on a big screen the window opens tall enough and never scrolls.
+        self.canvas.configure(width=w, height=h, scrollregion=(0, 0, w, h))
+        self._update_bar()
+
+    def needed(self):
+        return self.inner.winfo_reqheight() > self.canvas.winfo_height() + 1
+
+    def _update_bar(self):
+        self.canvas.itemconfigure(self._win, width=max(self.canvas.winfo_width(), self.inner.winfo_reqwidth()))
+        if self.needed():
+            if not self.vsb.winfo_manager():
+                self.vsb.grid()
+        else:
+            if self.vsb.winfo_manager():
+                self.vsb.grid_remove()
+            self.canvas.yview_moveto(0)
+
+    def contains(self, w):
+        p = str(self) + "."
+        return w is not None and (str(w) + ".").startswith(p)
+
+    def scroll(self, units):
+        if units and self.needed():
+            self.canvas.yview_scroll(units, "units")
+
+    def set_bg(self, colour):
+        self.canvas.configure(bg=colour)
 
 
 class Link(ttk.Label):
@@ -374,12 +479,18 @@ class App:
         self._mask3d = None          # where its backdrop is, so dark theme can recolour it
         self._w2d = 0                # width the 2D preview was last drawn at
         self._fit_after = None
+        self._compact = None         # compact layout for short screens (None until first decided)
+        self._tight = False          # very short screen: smaller 2D preview still
+        self._max2d_h = 360          # tallest the 2D preview may be drawn
+        self._layout_after = None
         self.theme = Theme(root)
         self.theme.apply(self.s.get("theme", "light"))
         root.title(APP_NAME)
         self._build_menu()
         self._build_ui()
         self._apply_widget_colours()
+        self._update_layout()
+        root.bind("<Configure>", self._on_root_configure, add="+")
         self._refresh_cli_field()
         self._set_3d_state("idle")
         if selftest:
@@ -440,6 +551,7 @@ class App:
 
         # header
         hd = ttk.Frame(r, style="Header.TFrame", padding=(18, 10, 18, 10)); hd.grid(row=0, column=0, sticky="we")
+        self._hd = hd
         self._hicon = icon_image(40)
         if self._hicon is not None:
             ttk.Label(hd, image=self._hicon, style="Header.TLabel").pack(side="left", padx=(0, 12))
@@ -453,13 +565,17 @@ class App:
                         variable=self.v_dark, command=self._on_dark_switch).pack(side="right", padx=(0, 18))
 
         body = ttk.Frame(r, padding=(14, 10, 14, 4)); body.grid(row=1, column=0, sticky="nsew")
+        self._body = body
         body.columnconfigure(1, weight=1); body.rowconfigure(0, weight=1)
-        left = ttk.Frame(body); left.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        # The left column scrolls when the screen is too short for it (small laptops, display scaling).
+        self.scroll = ScrollArea(body); self.scroll.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        left = self.scroll.inner
         right = ttk.Frame(body); right.grid(row=0, column=1, sticky="nsew")
         left.columnconfigure(0, weight=1)
 
         # --- wording + favourites
         wc = self._card(left, "Wording"); wc.grid(row=0, column=0, sticky="we", pady=(0, 8))
+        self._gap_cards = [wc]
         self.v_text = tk.StringVar(value=self.s["text"])
         self.e_text = ttk.Entry(wc, textvariable=self.v_text, font=self.theme.fonts["entry_big"])
         self.e_text.grid(row=0, column=0, columnspan=4, sticky="we")
@@ -478,11 +594,13 @@ class App:
 
         # --- font
         fc = self._card(left, "Font"); fc.grid(row=1, column=0, sticky="we", pady=(0, 8))
+        self._gap_cards.append(fc)
         self.v_search = tk.StringVar()
         se = ttk.Frame(fc); se.grid(row=0, column=0, sticky="we")
         ttk.Label(se, text="Search", style="Muted.TLabel").pack(side="left", padx=(0, 8))
         ttk.Entry(se, textvariable=self.v_search).pack(side="left", fill="x", expand=True)
         fl = ttk.Frame(fc); fl.grid(row=1, column=0, sticky="we", pady=(6, 4))
+        self._lbframe = fl
         self.lb = tk.Listbox(fl, height=7, width=46, exportselection=False, activestyle="none",
                              relief="flat", borderwidth=0, highlightthickness=1, font=self.theme.fonts["body"])
         sb = ttk.Scrollbar(fl, command=self.lb.yview); self.lb.config(yscrollcommand=sb.set)
@@ -499,6 +617,7 @@ class App:
 
         # --- sizes + style
         nf = self._card(left, "Size and style"); nf.grid(row=2, column=0, sticky="we", pady=(0, 8))
+        self._gap_cards.append(nf)
         self.v_num = {}
         for i, (k, lab) in enumerate(NUM_FIELDS):
             ttk.Label(nf, text=lab).grid(row=i // 2, column=(i % 2) * 2, sticky="e", padx=(6, 6), pady=2)
@@ -548,6 +667,7 @@ class App:
         # --- right: 3D preview
         p3 = self._card(right, "3D preview  ·  rendered by SolidCraft, what will print")
         p3.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
+        self._p3 = p3
         bar = ttk.Frame(p3); bar.pack(fill="x", pady=(0, 6))
         ttk.Checkbutton(bar, text="Auto 3D preview", variable=self.v_auto3d, command=self._on_auto3d,
                         style="Switch.TCheckbutton" if self.theme.sv else "TCheckbutton").pack(side="left")
@@ -583,11 +703,23 @@ class App:
         ttk.Entry(oc, textvariable=self.v_cli).grid(row=2, column=1, sticky="we", pady=2)
         ttk.Button(oc, text="Browse…", command=self.browse_cli, style="Small.TButton").grid(row=2, column=2, padx=(8, 0))
         self.v_savehint = tk.StringVar()
-        ttk.Label(oc, textvariable=self.v_savehint, style="Muted.TLabel").grid(row=3, column=0, columnspan=3,
+        self._l_savehint = ttk.Label(oc, textvariable=self.v_savehint, style="Muted.TLabel")
+        self._l_savehint.grid(row=3, column=0, columnspan=3,
                                                                            sticky="w", pady=(4, 0))
         oc.columnconfigure(1, weight=1)
         self.v_out.trace_add("write", lambda *a: self._update_save_hint())
         self._update_save_hint()
+
+        # Wheel over the left column scrolls it, except over the font list (which scrolls itself).
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            r.bind_all(seq, self._on_wheel, add="+")
+        # A read-only combobox would change its value under the wheel: scroll the column instead.
+        stack = [left]
+        while stack:
+            w = stack.pop(); stack.extend(w.winfo_children())
+            if isinstance(w, ttk.Combobox):
+                for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                    w.bind(seq, self._on_wheel_break)
 
         # status bar
         sbar = ttk.Frame(r, style="Status.TFrame", padding=(18, 4)); sbar.grid(row=2, column=0, sticky="we")
@@ -614,6 +746,11 @@ class App:
                           selectbackground=c["accent"], selectforeground="#ffffff" if self.theme.name == "light" else "#000000",
                           highlightbackground=c["border"], highlightcolor=c["accent"])
         self.c2d.configure(bg=c["preview"])
+        try:
+            frame_bg = self.theme.style.lookup("TFrame", "background") or c["bg"]
+        except tk.TclError:
+            frame_bg = c["bg"]
+        self.scroll.set_bg(frame_bg)
         self.f3d.configure(bg=c["preview3d"])
         self.c3d.configure(bg=c["preview3d"], fg=c["muted"], font=self.theme.fonts["large"])
         self._fit_3d()
@@ -757,6 +894,13 @@ class App:
         try:
             w = self.c2d.winfo_width()
             w = 760 if w < 50 else max(200, min(w, 1100))
+            # Keep tall plates from pushing the rest of the window off a short screen.
+            try:
+                L, H = float(p["length"]), float(p["height"])
+                if L > 0 and H > 0:
+                    w = max(200, min(w, int((self._max2d_h - 60) * L / H) + 60))
+            except (TypeError, ValueError, KeyError):
+                pass
             self._w2d = w
             bg = tuple(int(self.theme.c["preview"][i:i + 2], 16) for i in (1, 3, 5))
             img, info = sc.preview_image(p, f, width_px=w, bg=bg)
@@ -780,6 +924,80 @@ class App:
         w = max(200, min(e.width, 1100))
         if abs(w - self._w2d) > 2:
             self.schedule(80)
+
+    # ---------------- fitting the screen
+    def _on_wheel(self, e):
+        w = self.root.winfo_containing(e.x_root, e.y_root)
+        if w is None or not self.scroll.contains(w):
+            return
+        if str(w).startswith(str(self._lbframe)):
+            return                     # the font list scrolls itself
+        self.scroll.scroll(self._wheel_units(e))
+
+    def _on_wheel_break(self, e):
+        self.scroll.scroll(self._wheel_units(e))
+        return "break"
+
+    @staticmethod
+    def _wheel_units(e):
+        if getattr(e, "num", None) == 4:
+            return -1
+        if getattr(e, "num", None) == 5:
+            return 1
+        d = getattr(e, "delta", 0) or 0
+        if sys.platform == "darwin" and abs(d) < 120:
+            return -d
+        n = int(-d / 120)
+        return n or (-1 if d > 0 else 1 if d < 0 else 0)
+
+    def _on_root_configure(self, e):
+        if e.widget is not self.root:
+            return
+        if self._layout_after:
+            self.root.after_cancel(self._layout_after)
+        self._layout_after = self.root.after(300, self._update_layout)
+
+    def _update_layout(self):
+        """Pick the normal or compact layout from the screen the window is on and the window size.
+        Moving to another monitor or resizing re-checks it. Only sizes change, never the design,
+        so this does not start a 3D build."""
+        self._layout_after = None
+        try:
+            scale = screen_scale(self.root)
+            work_h = work_area(self.root)[3] / scale
+            win_h = self.root.winfo_height() / scale if self.root.winfo_ismapped() else None
+        except Exception:
+            return
+        if self._compact:
+            want = work_h < COMPACT_BELOW + 20 or (win_h is not None and win_h < 820)
+        else:
+            want = work_h < COMPACT_BELOW or (win_h is not None and win_h < 780)
+        tight = want and work_h < 660
+        if want != self._compact or (want and tight != self._tight):
+            self._tight = tight
+            self._set_compact(want)
+
+    def _set_compact(self, compact):
+        self._compact = compact
+        self.theme.compact = compact
+        self.theme.style.configure("TLabelframe", padding=(12, 4, 12, 7) if compact else (14, 8, 14, 12))
+        self._hd.configure(padding=(18, 5, 18, 5) if compact else (18, 10, 18, 10))
+        self._body.configure(padding=(12, 6, 12, 2) if compact else (14, 10, 14, 4))
+        for c in self._gap_cards:
+            c.grid_configure(pady=(0, 4) if compact else (0, 8))
+        self._p3.grid_configure(pady=(4, 4) if compact else (8, 8))
+        self.lb.configure(height=4 if compact else 7)
+        self.f3d.configure(height=180 if compact else 320)
+        old = self._max2d_h
+        self._max2d_h = (120 if self._tight else 170) if compact else 360
+        if compact and self._tight:
+            self._l_savehint.grid_remove()       # the folder is in the field above anyway
+        else:
+            self._l_savehint.grid()
+        self.root.update_idletasks()
+        self.scroll.refresh()
+        if old != self._max2d_h and self.fonts:
+            self.schedule(0)
 
     def save_settings_soon(self, p):
         for k in ["text", "length", "height", "thickness", "raise", "margin", "corner", "spacing", "auto_size", "text_size",
@@ -1280,6 +1498,15 @@ def selftest():
     # theme switch both ways, and the About window
     for name in ("dark", "light"):
         app.v_theme.set(name); app._on_theme(); root.update()
+    # short-screen layout: compact sizes, and the left column scrolls to the colours
+    app._set_compact(True); root.geometry("1000x640"); root.update()
+    if not app.scroll.needed() or not app.scroll.vsb.winfo_manager():
+        raise RuntimeError("left column does not scroll on a short window")
+    app.scroll.canvas.yview_moveto(1.0); root.update()
+    if app.scroll.canvas.yview()[1] < 0.999:
+        raise RuntimeError("left column cannot reach the bottom")
+    log.append("compact layout: scrolls %.2f-%.2f, lb %s rows" % (app.scroll.canvas.yview() + (app.lb.cget("height"),)))
+    app._set_compact(False); root.geometry(""); root.update()
     about = app.show_about(modal=False); root.update()
     log.append("about: %dx%d" % (about.winfo_width(), about.winfo_height()))
     about.close()
@@ -1313,6 +1540,7 @@ if __name__ == "__main__":
         sys.exit(0)
     root = tk.Tk()
     root.withdraw()                      # stay hidden until it is sized and centred
+    remember_screen_dpi(root)
     try:
         root.tk.call("tk", "scaling", 1.3)
     except Exception:
