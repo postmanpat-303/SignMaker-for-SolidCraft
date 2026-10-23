@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign Maker for SolidCraft — two-colour 3D-print signs</title>
+<meta name="description" content="Type a line of text, pick a font, and export a two-colour 3D-print sign that drops straight into your slicer. A free, open-source companion for SolidCraft on Windows, macOS and Linux.">
+<meta name="theme-color" content="#10283f">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Sign Maker for SolidCraft">
+<meta property="og:description" content="Type a line of text, pick a font, export a two-colour 3D-print sign. Plate on filament 1, text on filament 2.">
+<meta property="og:image" content="https://raw.githubusercontent.com/postmanpat-303/SignMaker-for-SolidCraft/main/docs/banner-light.svg">
+<link rel="icon" href="icon.png" type="image/png">
+<style>
+  :root {
+    --bg: #f7f9fb;
+    --panel: #ffffff;
+    --ink: #10283f;
+    --muted: #55657a;
+    --line: #dbe3ec;
+    --accent: #1d4e89;
+    --accent-ink: #ffffff;
+    --shadow: 0 1px 2px rgba(16, 40, 63, .06), 0 8px 24px rgba(16, 40, 63, .06);
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11161d;
+      --panel: #18202a;
+      --ink: #eef3f8;
+      --muted: #9fb0c2;
+      --line: #263241;
+      --accent: #6aa6f0;
+      --accent-ink: #0d1420;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 17px/1.6 "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  }
+  a { color: var(--accent); }
+  a:focus-visible, .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .wrap { width: min(1080px, 100%); margin-inline: auto; padding-inline: 20px; }
+  img, svg { max-width: 100%; }
+  .skip {
+    position: absolute; left: -9999px; top: 0; background: var(--panel); color: var(--ink);
+    padding: 10px 16px; border-radius: 0 0 8px 0; z-index: 10;
+  }
+  .skip:focus { left: 0; }
+
+  header.site {
+    position: sticky; top: 0; z-index: 5;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  header.site .wrap { display: flex; align-items: center; gap: 18px; min-height: 62px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; color: var(--ink); text-decoration: none; letter-spacing: -.01em; }
+  .brand img { width: 26px; height: 26px; border-radius: 6px; }
+  nav.site { margin-left: auto; display: flex; gap: 22px; }
+  nav.site a { color: var(--muted); text-decoration: none; font-size: 15px; }
+  nav.site a:hover { color: var(--ink); }
+  @media (max-width: 720px) { nav.site { display: none; } }
+
+  .hero { padding-block: 46px 10px; }   /* padding-block: keep .wrap's side padding */
+  .hero .eyebrow {
+    display: inline-block; margin: 0 0 14px; padding: 5px 12px; border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent); font-size: 13px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .hero h1 { margin: 0 0 14px; font-size: clamp(34px, 5vw, 52px); line-height: 1.08; letter-spacing: -.025em; }
+  .hero p.lede { margin: 0 0 26px; font-size: clamp(18px, 2.2vw, 21px); color: var(--muted); max-width: 46ch; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 13px 22px; border-radius: 11px; text-decoration: none;
+    font-weight: 650; font-size: 16px; border: 1px solid transparent;
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.ghost { background: var(--panel); color: var(--ink); border-color: var(--line); }
+  .fineprint { margin: 16px 0 0; color: var(--muted); font-size: 14px; }
+
+  .banner {
+    margin: 34px 0 0; border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--panel);
+  }
+  .banner img { display: block; width: 100%; height: auto; }
+
+  section { padding: 62px 0 0; }
+  section h2 { margin: 0 0 8px; font-size: clamp(24px, 3vw, 30px); letter-spacing: -.02em; }
+  section > .wrap > p.sub { margin: 0 0 28px; color: var(--muted); max-width: 62ch; }
+
+  .grid { display: grid; gap: 18px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px 22px; box-shadow: var(--shadow);
+  }
+  .card h3 { margin: 0 0 6px; font-size: 17px; letter-spacing: -.01em; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .card .ico {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; margin-bottom: 12px; border-radius: 11px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    font-size: 19px; line-height: 1;
+  }
+
+  .dl { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .dl .card { display: flex; flex-direction: column; }
+  .dl .card p { margin-bottom: 14px; }
+  .dl .card a.btn { margin-top: auto; justify-content: center; }
+  .note {
+    margin-top: 18px; padding: 14px 18px; border-radius: 12px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+    border: 1px solid var(--line); color: var(--muted); font-size: 14.5px;
+  }
+  .note strong { color: var(--ink); }
+
+  .shots { grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); align-items: start; }
+  figure { margin: 0; }
+  figure a { display: block; }
+  figure img {
+    display: block; width: 100%; height: auto; border-radius: 12px;
+    border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--panel);
+  }
+  figcaption { margin-top: 9px; color: var(--muted); font-size: 14px; }
+
+  .news { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  .news li {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 20px; display: grid; grid-template-columns: 74px 1fr; gap: 14px; align-items: baseline;
+  }
+  .news .ver { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .news p { margin: 0; color: var(--muted); font-size: 15px; }
+  @media (max-width: 560px) {
+    .news li { grid-template-columns: 1fr; gap: 4px; }
+    .hero .eyebrow { font-size: 12px; letter-spacing: .03em; }
+    .actions .btn { width: 100%; justify-content: center; }
+    .hero { padding-block: 34px 8px; }
+  }
+
+  footer.site { margin-top: 72px; border-top: 1px solid var(--line); padding: 30px 0 44px; color: var(--muted); font-size: 14.5px; }
+  footer.site .wrap { display: flex; flex-wrap: wrap; gap: 14px 26px; align-items: center; }
+  footer.site a { color: var(--muted); }
+  footer.site a:hover { color: var(--ink); }
+  footer.site .spacer { margin-left: auto; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn { transition: none; }
+    .btn:hover { transform: none; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="icon.png" alt="" width="26" height="26">Sign Maker</a>
+    <nav class="site" aria-label="Page">
+      <a href="#download">Download</a>
+      <a href="#features">Features</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#news">What's new</a>
+      <a href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="hero wrap" id="top">
+    <p class="eyebrow">Unofficial add-on for SolidCraft</p>
+    <h1>Sign Maker for SolidCraft</h1>
+    <p class="lede">Type a line of text, pick a font, and export a two-colour 3D-print sign that drops straight into your slicer.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases/latest" rel="noopener">Download the latest release</a>
+      <a class="btn ghost" href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft" rel="noopener">See it on GitHub</a>
+    </div>
+    <p class="fineprint">Windows · macOS · Linux &nbsp;·&nbsp; Free and open source (MIT) &nbsp;·&nbsp; Plate on filament 1, text on filament 2</p>
+
+    <div class="banner">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="banner-dark.svg">
+        <img src="banner-light.svg" alt="An engineering drawing of a two-colour sign plate reading Welcome, titled Sign Maker for SolidCraft." width="1200" height="500">
+      </picture>
+    </div>
+  </div>
+
+  <section id="download">
+    <div class="wrap">
+      <h2>Download</h2>
+      <p class="sub">Choose your platform. The installers and bundles are built automatically for every release.</p>
+      <div class="grid dl">
+        <div class="card">
+          <span class="ico" aria-hidden="true">🪟</span>
+          <h3>Windows 10 and 11</h3>
+          <p>Setup exe, or a portable zip that runs from any folder.</p>
+          <a class="btn primary" href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases/latest" rel="noopener">Get the Windows build</a>
+        </div>
+        <div class="card">
+          <span class="ico" aria-hidden="true">🍎</span>
+          <h3>macOS 11+</h3>
+          <p>Apple silicon. Unsigned, so right-click the app and choose <strong>Open</strong> the first time.</p>
+          <a class="btn primary" href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases/latest" rel="noopener">Get the Mac build</a>
+        </div>
+        <div class="card">
+          <span class="ico" aria-hidden="true">🐧</span>
+          <h3>Linux x86_64</h3>
+          <p>Tarball built on Ubuntu. On aarch64, run from source with <code>run.sh</code>.</p>
+          <a class="btn primary" href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases/latest" rel="noopener">Get the Linux build</a>
+        </div>
+      </div>
+      <p class="note"><strong>SolidCraft is a separate install.</strong> Sign Maker drives SolidCraft's headless <code>solidcraft-cli</code> to build and preview the model — the 2D preview works without it. The Windows setup is not code-signed, so SmartScreen may say “Windows protected your PC”: choose <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>What it does</h2>
+      <p class="sub">A small, focused tool: one line of text, real measurements, two colours, and a file your slicer understands.</p>
+      <div class="grid cards">
+        <div class="card">
+          <span class="ico" aria-hidden="true">✍️</span>
+          <h3>One line, any font</h3>
+          <p>Pick any installed font, or browse to a .ttf, .otf or .ttc. Bold uses the family’s own bold face.</p>
+        </div>
+        <div class="card">
+          <span class="ico" aria-hidden="true">📐</span>
+          <h3>Real dimensions</h3>
+          <p>Plate, thickness, raise, margin, corner radius and letter spacing — with auto-fit so the text always fits inside the margins.</p>
+        </div>
+        <div class="card">
+          <span class="ico" aria-hidden="true">🎨</span>
+          <h3>Two colours</h3>
+          <p>Plate and text colours from swatches, presets, or any <code>#RRGGBB</code> you like, including engraved inlays.</p>
+        </div>
+        <div class="card">
+          <span class="ico" aria-hidden="true">👁️</span>
+          <h3>Instant 2D preview</h3>
+          <p>True proportions, drawn from the real font file, so you see the sign before SolidCraft is even involved.</p>
+        </div>
+        <div class="card">
+          <span class="ico" aria-hidden="true">🧊</span>
+          <h3>Live 3D preview</h3>
+          <p>SolidCraft’s own render of the sign that will print, rebuilt in the background a moment after you stop typing.</p>
+        </div>
+        <div class="card">
+          <span class="ico" aria-hidden="true">🧵</span>
+          <h3>Slicer-ready 3MF</h3>
+          <p>One object, two parts: <strong>Plate</strong> on filament 1 and <strong>Text</strong> on filament 2, already in place.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <div class="wrap">
+      <h2>Screenshots</h2>
+      <p class="sub">The window below is the real app. Click any picture for the full size.</p>
+      <div class="grid shots">
+        <figure>
+          <a href="screenshots/app-window.png"><img src="screenshots/app-window.png" alt="The Sign Maker window: the word Workshop in cream on a navy plate, with the 2D preview and SolidCraft's 3D preview." loading="lazy"></a>
+          <figcaption>“Workshop” in DM Serif Display, cream on navy — with SolidCraft’s 3D preview beside it.</figcaption>
+        </figure>
+        <figure>
+          <a href="screenshots/app-window-dark.png"><img src="screenshots/app-window-dark.png" alt="Sign Maker in its dark theme: the word Welcome in white on a red plate." loading="lazy"></a>
+          <figcaption>The dark theme: “Welcome” in Bree Serif, white on post-box red.</figcaption>
+        </figure>
+        <figure>
+          <a href="screenshots/workshop-dimensions.png"><img src="screenshots/workshop-dimensions.png" alt="A dimension sheet for a Workshop sign, showing measurements on a 3D view of the plate." loading="lazy"></a>
+          <figcaption>Every sign comes with a dimension sheet, saved next to the 3MF.</figcaption>
+        </figure>
+        <figure>
+          <a href="screenshots/welcome-3d-preview.png"><img src="screenshots/welcome-3d-preview.png" alt="SolidCraft's 3D preview of a raised Welcome sign, white letters on a red plate." loading="lazy"></a>
+          <figcaption>Raised letters on the plate, rendered by SolidCraft — exactly what prints.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section id="news">
+    <div class="wrap">
+      <h2>What’s new</h2>
+      <p class="sub">Full notes for every release are on <a href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases" rel="noopener">the releases page</a>.</p>
+      <ul class="news">
+        <li>
+          <span class="ver">1.1.4</span>
+          <p>The Make 3MF button twinkles when the file has been saved — a quiet “that worked” that only appears on success.</p>
+        </li>
+        <li>
+          <span class="ver">1.1.3</span>
+          <p>Signs build sooner (one SolidCraft measurement per build instead of two), no scratch folders are left behind, the 3MF follows SolidCraft if it ever moves the parts, and dimension sheets use a proper font on macOS.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="requirements">
+    <div class="wrap">
+      <h2>Before you start</h2>
+      <p class="sub">Sign Maker is the friendly front end; SolidCraft does the modelling.</p>
+      <div class="grid cards">
+        <div class="card">
+          <h3>SolidCraft, with its CLI</h3>
+          <p>Install SolidCraft from <a href="https://github.com/tangency-labs/solidcraft/releases" rel="noopener">its releases page</a>. On Windows use the MSI or the portable zip — the single-file exe has no CLI. If it isn’t found, point Sign Maker at <code>solidcraft-cli</code> with <strong>Browse</strong>.</p>
+        </div>
+        <div class="card">
+          <h3>Or run from source</h3>
+          <p>Python 3.10 or newer, then <code>pip install -r requirements.txt</code> and start <code>run.bat</code>, <code>run.command</code> or <code>run.sh</code>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>MIT © 2026 Del (postmanpat)</span>
+    <span>Unofficial community add-on — not affiliated with or endorsed by the SolidCraft maintainers.</span>
+    <span class="spacer"></span>
+    <a href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft" rel="noopener">GitHub</a>
+    <a href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases" rel="noopener">Releases</a>
+    <a href="https://buymeacoffee.com/postmanpat" rel="noopener">Buy me a coffee</a>
+  </div>
+</footer>
+</body>
+</html>
