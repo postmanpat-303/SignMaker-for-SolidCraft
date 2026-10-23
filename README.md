@@ -27,6 +27,12 @@
 </p>
 
 <p align="center">
+  <a href="https://postmanpat-303.github.io/SignMaker-for-SolidCraft/"><strong>🌐 Website</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/postmanpat-303/SignMaker-for-SolidCraft/releases/latest"><strong>⬇ Download the latest release</strong></a>
+</p>
+
+<p align="center">
   Unofficial community add-on for <a href="https://github.com/tangency-labs/solidcraft">SolidCraft</a>.
   Not affiliated with or endorsed by the SolidCraft maintainers.
 </p>
