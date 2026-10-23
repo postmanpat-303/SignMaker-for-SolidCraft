@@ -43,6 +43,11 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
 
 ## What's new
 
+**1.1.5** — the Make 3MF button steams while it works:
+
+- **A small puff of theatre.** Press **Make 3MF** and a few little wisps curl off the button for about four seconds, then fade away. It works in light and dark themes.
+- **The saved twinkle is still there.** When the file is written, the button still flashes **✦ Saved!** before going back to normal.
+
 **1.1.4** — the Make 3MF button twinkles when the file is saved:
 
 - **You can see it worked.** Once the 3MF is written, the button flashes **✦ Saved!** a few times and then goes back to normal. It only does this on success.

@@ -13,7 +13,7 @@ try:
 except Exception:  # pragma: no cover - the app still runs on plain ttk
     sv_ttk = None
 
-__version__ = "1.1.4"
+__version__ = "1.1.5"
 
 APP_NAME = "Sign Maker for SolidCraft"
 AUTHOR = "Del (postmanpat)"
