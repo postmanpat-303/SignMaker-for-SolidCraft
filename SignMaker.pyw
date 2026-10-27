@@ -599,6 +599,322 @@ class ScrollArea(ttk.Frame):
         self.canvas.configure(bg=colour)
 
 
+class FontList(tk.Canvas):
+    """Fonts drawn in their own typeface, one row each.
+
+    A Listbox draws every row in one font, so the rows are drawn on a canvas instead: the
+    name and a short sample, both in the font itself. Only the rows on screen are drawn,
+    which keeps a machine with hundreds of fonts responsive.
+
+    on_pick(name) fires when a row is chosen, on_accept(name) on a double-click.
+    """
+
+    ROW_H = 42
+    SAMPLE_W = 128
+
+    def __init__(self, parent, theme, rows=6, on_pick=None, on_accept=None, sample="Aa Bb 123"):
+        super().__init__(parent, highlightthickness=1, borderwidth=0,
+                         height=rows * self.ROW_H, width=240)
+        self.theme = theme
+        self.rows = rows
+        self.sample = sample
+        self.on_pick = on_pick
+        self.on_accept = on_accept
+        self.fonts = []
+        self.current = None
+        self.hover = None
+        self._faces = {}
+        self.bind("<Configure>", lambda e: self.redraw())
+        self.bind("<Motion>", self._on_motion)
+        self.bind("<Leave>", lambda e: self._set_hover(None))
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Double-Button-1>", self._on_double)
+        self.bind("<MouseWheel>", lambda e: self.scroll(-1 if e.delta > 0 else 1))
+        self.bind("<Button-4>", lambda e: self.scroll(-2))
+        self.bind("<Button-5>", lambda e: self.scroll(2))
+        self.set_theme()
+
+    # ---------------------------------------------------------------- appearance
+    def set_theme(self):
+        c = self.theme.c
+        self.configure(bg=c["bg"], highlightbackground=c["border"], highlightcolor=c["accent"])
+        self._faces = {}                  # families can render differently after a theme switch
+        self.redraw()
+
+    def set_rows(self, rows):
+        self.rows = rows
+        self.configure(height=rows * self.ROW_H)
+        self.redraw()
+
+    def _on_accent(self):
+        return "#ffffff" if self.theme.name == "light" else "#0d1420"
+
+    def _face(self, f, px):
+        key = ((f.get("family") or f.get("name") or ""), px)
+        face = self._faces.get(key)
+        if face is None:
+            try:
+                face = tkfont.Font(self, family=key[0], size=-px)
+            except tk.TclError:
+                face = self.theme.fonts["body"]
+            self._faces[key] = face
+        return face
+
+    @staticmethod
+    def _fit(face, text, max_px):
+        """Trim to the width, with an ellipsis, so a long name cannot collide with the sample."""
+        try:
+            if face.measure(text) <= max_px:
+                return text
+            lo, hi = 0, len(text)
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if face.measure(text[:mid] + "…") <= max_px:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            return text[:lo] + "…"
+        except tk.TclError:
+            return text
+
+    # ---------------------------------------------------------------- data
+    def set_fonts(self, fonts, current=None):
+        self.fonts = list(fonts)
+        if current is not None:
+            self.current = current
+        self.redraw()
+        self.after_idle(self.see_current)
+
+    def set_current(self, name):
+        self.current = name
+        self.redraw()
+
+    def see_current(self):
+        """Scroll so the chosen font is visible (does nothing before the first layout)."""
+        if not self.current or not self.fonts:
+            return
+        names = [f["name"] for f in self.fonts]
+        if self.current not in names:
+            return
+        i = names.index(self.current)
+        top, view = self.canvasy(0), self.winfo_height()
+        y = i * self.ROW_H
+        if y < top or y + self.ROW_H > top + view:
+            total = max(1, len(self.fonts) * self.ROW_H)
+            self.yview_moveto(max(0.0, (y - view / 2.0) / total))
+
+    # ---------------------------------------------------------------- drawing
+    def redraw(self):
+        self.delete("row")
+        w = max(self.winfo_width(), 40)
+        total = max(1, len(self.fonts) * self.ROW_H)
+        self.configure(scrollregion=(0, 0, w, total))
+        if not self.fonts:
+            self.create_text(w / 2, 30, text="No fonts found", fill=self.theme.c["muted"],
+                             font=self.theme.fonts["body"], tags="row")
+            return
+        top, view = self.canvasy(0), self.winfo_height()
+        first = max(0, int(top // self.ROW_H))
+        last = min(len(self.fonts), int((top + view) // self.ROW_H) + 2)
+        for i in range(first, last):
+            self._row(i, w)
+
+    def _row(self, i, w):
+        f = self.fonts[i]
+        name = f["name"]
+        y = i * self.ROW_H
+        chosen = name == self.current
+        if chosen or name == self.hover:
+            fill = self.theme.c["accent"] if chosen else self.theme.c["preview"]
+            self.create_rectangle(2, y + 1, w - 2, y + self.ROW_H - 2,
+                                  fill=fill, outline="", tags="row")
+        fg = self._on_accent() if chosen else self.theme.c["fg"]
+        face = self._face(f, 15)
+        self.create_text(12, y + self.ROW_H / 2, anchor="w", tags="row", fill=fg, font=face,
+                         text=self._fit(face, name, w - self.SAMPLE_W - 34))
+        sface = self._face(f, 13)
+        self.create_text(w - 12, y + self.ROW_H / 2, anchor="e", tags="row",
+                         fill=fg if chosen else self.theme.c["muted"], font=sface,
+                         text=self._fit(sface, self.sample, self.SAMPLE_W))
+
+    # ---------------------------------------------------------------- interaction
+    def _index_at(self, event):
+        i = int(self.canvasy(event.y) // self.ROW_H)
+        return i if 0 <= i < len(self.fonts) else None
+
+    def _set_hover(self, name):
+        if name != self.hover:
+            self.hover = name
+            self.redraw()
+
+    def _on_motion(self, event):
+        i = self._index_at(event)
+        self._set_hover(self.fonts[i]["name"] if i is not None else None)
+
+    def _on_click(self, event):
+        i = self._index_at(event)
+        if i is None:
+            return
+        self.set_current(self.fonts[i]["name"])
+        if self.on_pick:
+            self.on_pick(self.current)
+
+    def _on_double(self, event):
+        i = self._index_at(event)
+        if i is None:
+            return
+        self.set_current(self.fonts[i]["name"])
+        if self.on_accept:
+            self.on_accept(self.current)
+
+    def scroll(self, units):
+        """Wheel scrolling: keep it to whole rows so the list never lands mid-row."""
+        if not self.fonts:
+            return
+        top = self.canvasy(0)
+        total = max(1, len(self.fonts) * self.ROW_H)
+        self.yview_moveto(max(0.0, min(1.0, (top + units * self.ROW_H) / total)))
+
+
+class FontChooser(tk.Toplevel):
+    """A big font picker: every font listed in its own typeface, with a live preview.
+
+    Picking a row previews it; double-click or "Use this font" applies it.
+    """
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
+        self.theme = app.theme
+        self.withdraw()
+        self.title("Choose a font")
+        self.transient(parent)
+        self.configure(bg=self.theme.c["bg"])
+        self.minsize(760, 520)
+
+        head = ttk.Frame(self, padding=(16, 14, 16, 6))
+        head.pack(fill="x")
+        ttk.Label(head, text="Choose a font", font=self.theme.fonts["large"]).pack(side="left")
+        ttk.Label(head, text="Every name is drawn in its own typeface",
+                  style="Muted.TLabel").pack(side="left", padx=(12, 0))
+
+        row = ttk.Frame(self, padding=(16, 0, 16, 8))
+        row.pack(fill="x")
+        ttk.Label(row, text="Search", style="Muted.TLabel").pack(side="left", padx=(0, 8))
+        self.v_search = tk.StringVar()
+        entry = ttk.Entry(row, textvariable=self.v_search)
+        entry.pack(side="left", fill="x", expand=True)
+        self.v_search.trace_add("write", lambda *a: self._filter())
+
+        body = ttk.Frame(self, padding=(16, 0, 16, 0))
+        body.pack(fill="both", expand=True)
+        # The preview keeps a fixed width so the font list gets every spare pixel.
+        right = ttk.Frame(body, width=300)
+        right.pack(side="right", fill="y")
+        right.pack_propagate(False)
+        left = ttk.Frame(body)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 16))
+
+        self.list = FontList(left, self.theme, rows=9, on_pick=self._preview,
+                             on_accept=self._use_name)
+        sb = ttk.Scrollbar(left, command=self.list.yview)
+        self.list.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y", padx=(4, 0))
+        self.list.pack(side="left", fill="both", expand=True)
+
+        self.preview = tk.Canvas(right, bg=self.theme.c["preview"], highlightthickness=1,
+                                 highlightbackground=self.theme.c["border"], height=200)
+        self.preview.pack(fill="x")
+        self.preview.bind("<Configure>", lambda e: self._draw_preview())
+        self.l_name = ttk.Label(right, style="Info.TLabel", wraplength=280)
+        self.l_name.pack(anchor="w", pady=(10, 0))
+        self.l_hint = ttk.Label(right, style="Muted.TLabel", wraplength=280,
+                                text="This is how your wording will look. Double-click a name to apply it.")
+        self.l_hint.pack(anchor="w", pady=(6, 0))
+
+        foot = ttk.Frame(self, padding=(16, 12, 16, 16))
+        foot.pack(side="bottom", fill="x")
+        style = "Big.Accent.TButton" if self.theme.sv else "TButton"
+        ttk.Button(foot, text="Use this font", style=style, command=self._use).pack(side="right")
+        ttk.Button(foot, text="Cancel", command=self.destroy).pack(side="right", padx=(0, 8))
+
+        self._filter()
+        self.update_idletasks()
+        w = min(980, max(760, parent.winfo_width() - 80))
+        h = min(720, max(520, parent.winfo_height() - 80))
+        self.geometry("%dx%d+%d+%d" % (w, h,
+                                       parent.winfo_rootx() + (parent.winfo_width() - w) // 2,
+                                       parent.winfo_rooty() + (parent.winfo_height() - h) // 2))
+        self.deiconify()
+        self.grab_set()
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Return>", lambda e: self._use())
+        self.bind("<Down>", lambda e: self._step(1))
+        self.bind("<Up>", lambda e: self._step(-1))
+        entry.focus_set()
+
+    def _step(self, delta):
+        """Arrow keys walk the filtered list, so the search box keeps the keyboard."""
+        fonts = self.list.fonts
+        if not fonts:
+            return "break"
+        names = [f["name"] for f in fonts]
+        i = names.index(self.list.current) if self.list.current in names else -1
+        i = max(0, min(len(names) - 1, i + delta))
+        self.list.set_current(names[i])
+        self.list.see_current()
+        self._draw_preview()
+        return "break"
+
+    def _filter(self):
+        q = self.v_search.get().strip().lower()
+        fonts = [f for f in self.app.fonts if q in f["name"].lower()]
+        names = [f["name"] for f in fonts]
+        current = self.list.current or self.app.s.get("font")
+        if current not in names:
+            current = names[0] if names else None
+        self.list.set_fonts(fonts, current)
+        self._draw_preview()
+
+    def _preview(self, name):
+        self.list.set_current(name)
+        self._draw_preview()
+
+    def _draw_preview(self):
+        cv = self.preview
+        cv.delete("all")
+        w, h = max(cv.winfo_width(), 60), max(cv.winfo_height(), 60)
+        name = self.list.current
+        f = self.app.font_by_name.get(name) if name else None
+        if not f:
+            self.l_name.configure(text="")
+            return
+        family = f.get("family") or f["name"]
+        wording = (self.app.v_text.get() or "").strip() or "Workshop"
+        px = 44
+        face = tkfont.Font(self, family=family, size=-px)
+        while px > 12:
+            face = tkfont.Font(self, family=family, size=-px)
+            try:
+                fits = (face.measure(wording) <= w - 24
+                        and face.metrics("linespace") <= h - 20)
+            except tk.TclError:
+                fits = True
+            if fits:
+                break
+            px -= 2
+        cv.create_text(w / 2, h / 2, text=wording, font=face, fill=self.theme.c["fg"])
+        self.l_name.configure(text="%s   ·   %s" % (f["name"], f.get("style") or "Regular"))
+
+    def _use(self):
+        self._use_name(self.list.current)
+
+    def _use_name(self, name):
+        if name:
+            self.app.set_font(name)
+        self.destroy()
+
+
 class Link(ttk.Label):
     """A label that opens a web page, underlined on hover."""
 
@@ -848,15 +1164,17 @@ class App:
         ttk.Entry(se, textvariable=self.v_search).pack(side="left", fill="x", expand=True)
         fl = ttk.Frame(fc); fl.grid(row=1, column=0, sticky="we", pady=(6, 4))
         self._lbframe = fl
-        self.lb = tk.Listbox(fl, height=7, width=46, exportselection=False, activestyle="none",
-                             relief="flat", borderwidth=0, highlightthickness=1, font=self.theme.fonts["body"])
-        sb = ttk.Scrollbar(fl, command=self.lb.yview); self.lb.config(yscrollcommand=sb.set)
-        self.lb.pack(side="left", fill="both", expand=True); sb.pack(side="left", fill="y", padx=(4, 0))
-        self.lb.bind("<<ListboxSelect>>", self._on_font_pick)
-        fr = ttk.Frame(fc); fr.grid(row=2, column=0, sticky="we")
+        self.fontlist = FontList(fl, self.theme, rows=6, on_pick=self._on_font_pick,
+                                 on_accept=self.open_font_chooser)
+        sb = ttk.Scrollbar(fl, command=self.fontlist.yview)
+        self.fontlist.configure(yscrollcommand=sb.set)
+        self.fontlist.pack(side="left", fill="both", expand=True); sb.pack(side="left", fill="y", padx=(4, 0))
+        fr = ttk.Frame(fc); fr.grid(row=2, column=0, sticky="we", pady=(4, 0))
         self.v_fontname = tk.StringVar(value=self.s["font"])
         ttk.Label(fr, textvariable=self.v_fontname, style="Info.TLabel").pack(side="left")
-        ttk.Button(fr, text="Browse for font file…", command=self.browse_font, style="Small.TButton").pack(side="right")
+        ttk.Button(fr, text="Choose font…", command=self.open_font_chooser).pack(side="right")
+        ttk.Button(fr, text="Browse…", command=self.browse_font, style="Small.TButton").pack(
+            side="right", padx=(0, 6))
         self.v_bold = tk.BooleanVar(value=self.s.get("bold", False))
         ttk.Checkbutton(fc, text="Bold (uses the family's bold face)", variable=self.v_bold).grid(
             row=3, column=0, sticky="w", pady=(4, 0))
@@ -991,9 +1309,7 @@ class App:
             pass
         clear_labels(self.root)
         c = self.theme.c
-        self.lb.configure(bg=c["bg"] if self.theme.name == "dark" else "#ffffff", fg=c["fg"],
-                          selectbackground=c["accent"], selectforeground="#ffffff" if self.theme.name == "light" else "#000000",
-                          highlightbackground=c["border"], highlightcolor=c["accent"])
+        self.fontlist.set_theme()
         self.c2d.configure(bg=c["preview"])
         try:
             frame_bg = self.theme.style.lookup("TFrame", "background") or c["bg"]
@@ -1063,17 +1379,28 @@ class App:
 
     def _fill_list(self):
         q = self.v_search.get().lower().strip()
-        self.lb.delete(0, "end")
-        self._shown = [f["name"] for f in self.fonts if q in f["name"].lower()]
-        for n in self._shown:
-            self.lb.insert("end", n)
-        if self.s["font"] in self._shown:
-            i = self._shown.index(self.s["font"]); self.lb.selection_set(i); self.lb.see(i)
+        shown = [f for f in self.fonts if q in f["name"].lower()]
+        self._shown = [f["name"] for f in shown]
+        self.fontlist.set_fonts(shown, self.s["font"])
 
-    def _on_font_pick(self, e=None):
-        sel = self.lb.curselection()
-        if sel:
-            self.s["font"] = self._shown[sel[0]]; self.v_fontname.set(self.s["font"]); self.schedule()
+    def set_font(self, name):
+        """The one place that changes the chosen font."""
+        if not name or name not in self.font_by_name:
+            return
+        self.s["font"] = name
+        self.v_fontname.set(name)
+        self.fontlist.set_current(name)
+        self.schedule()
+
+    def _on_font_pick(self, name=None):
+        self.set_font(name)
+
+    def open_font_chooser(self, name=None):
+        """The big picker: every font in its own typeface, with a preview of the wording."""
+        if not self.fonts:
+            messagebox.showinfo("Sign Maker", "No fonts found yet. Install a font, or use Browse…")
+            return
+        FontChooser(self.root, self)
 
     def browse_font(self):
         p = filedialog.askopenfilename(title="Choose a font file", filetypes=[("Fonts", "*.ttf *.otf *.ttc"), ("All files", "*.*")])
@@ -1288,7 +1615,7 @@ class App:
         for c in self._gap_cards:
             c.grid_configure(pady=(0, 4) if compact else (0, 8))
         self._p3.grid_configure(pady=(4, 4) if compact else (8, 8))
-        self.lb.configure(height=4 if compact else 7)
+        self.fontlist.set_rows(4 if compact else 6)
         self.f3d.configure(height=180 if compact else 320)
         old = self._max2d_h
         self._max2d_h = (120 if self._tight else 170) if compact else 360
@@ -1895,7 +2222,7 @@ def selftest():
     if app.scroll.canvas.yview()[1] < 0.999:
         raise RuntimeError("left column cannot reach the bottom (%.3f at %s)"
                            % (app.scroll.canvas.yview()[1], root.geometry()))
-    log.append("compact layout: scrolls %.2f-%.2f, lb %s rows" % (app.scroll.canvas.yview() + (app.lb.cget("height"),)))
+    log.append("compact layout: scrolls %.2f-%.2f, font rows %s" % (app.scroll.canvas.yview() + (app.fontlist.rows,)))
     app._set_compact(False); root.geometry(""); root.update(); root.withdraw()
     # the Make button twinkles after a save and must come back to its own label
     app._sparkle_saved(); settle(1.0)
