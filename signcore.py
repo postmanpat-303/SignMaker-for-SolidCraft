@@ -53,7 +53,7 @@ FONT_CACHE = os.path.join(DATA_DIR, "fontcache.json")
 CREATE_NO_WINDOW = 0x08000000
 
 DEFAULTS = {
-    "text": "Your Text",
+    "text": "Welcome",
     "font": "Times New Roman",
     "length": 63.0, "height": 15.0, "thickness": 0.8,
     "raise": 1.0, "margin": 1.5, "corner": 0.0,
@@ -66,7 +66,7 @@ DEFAULTS = {
     "auto_preview": True,
     "theme": "light",
     "favourites": [
-        {"label": "Your Text (Times New Roman)", "text": "Your Text", "font": "Times New Roman"},
+        {"label": "Welcome (Times New Roman)", "text": "Welcome", "font": "Times New Roman"},
         {"label": "TELEPHONE (Times New Roman)", "text": "TELEPHONE", "font": "Times New Roman"},
     ],
 }
