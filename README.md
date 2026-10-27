@@ -49,6 +49,12 @@ It stays a SolidCraft companion. The 3D preview and the mesh come from SolidCraf
 
 ## What's new
 
+**1.1.6** — choose a font by looking at it, in a greener app:
+
+- **Fonts you can see.** The font list now draws every name in its own typeface, with an "Aa Bb 123" sample beside it, so you pick a face rather than guess from text.
+- **A proper font window.** **Choose font…** opens a tall picker with search, arrow keys and your actual wording previewed large beside the list.
+- **A sea-green theme.** Deep teal ink on mint paper, light and dark, instead of Windows blue.
+
 **1.1.5** — the Make 3MF button steams while it works:
 
 - **A small puff of theatre.** Press **Make 3MF** and a few little wisps curl off the button for about four seconds, then fade away. It works in light and dark themes.
@@ -88,7 +94,7 @@ Older versions are in the [release notes](https://github.com/postmanpat-303/Sign
 <p align="center">
   <img src="docs/screenshots/app-window.png" alt="Sign Maker window: Workshop in cream on a navy plate, with the 2D preview and SolidCraft's 3D preview" width="100%">
   <br>
-  <sub>The main window: wording “Workshop” in DM Serif Display, cream on navy. The 3D preview is SolidCraft's render, refreshed automatically.</sub>
+  <sub>The main window: every font in the list is drawn in its own typeface. The 3D preview is SolidCraft's render, refreshed automatically.</sub>
 </p>
 
 <table>
@@ -96,7 +102,7 @@ Older versions are in the [release notes](https://github.com/postmanpat-303/Sign
     <td align="center" width="50%">
       <img src="docs/screenshots/app-window-dark.png" alt="Sign Maker in the dark theme: Welcome in white on a red plate" width="100%">
       <br>
-      <sub>Dark theme: “Welcome” in Bree Serif, white on red.</sub>
+      <sub>The sea-green dark theme.</sub>
     </td>
     <td align="center" width="50%">
       <img src="docs/screenshots/about-window.png" alt="Help, About window: version, credits, Buy me a coffee and thanks to SolidCraft" width="70%">
