@@ -35,12 +35,17 @@ MODEL_KEYS = ["text", "length", "height", "thickness", "raise", "margin", "corne
               "text_size", "bold", "style", "plate_color", "text_color"]
 AUTO_3D_DELAY_MS = 850  # after the 2D preview's own 150 ms: about 1 s after the last change
 
-# Colours that go with the Sun Valley theme. Accent blue matches the app icon.
+# Sea-green theme: deep teal ink on mint paper, with a bright teal accent. It echoes the
+# app icon and the water-green look of the SolidCraft family.
 PALETTE = {
-    "light": dict(bg="#fafafa", fg="#1c1c1c", muted="#5f6670", accent="#005fb8", ok="#0f7b0f", warn="#b54708",
-                  preview="#eef2f7", preview3d="#e4eaf2", border="#d6dbe1", header="#f0f4fa"),
-    "dark": dict(bg="#1c1c1c", fg="#fafafa", muted="#a3a9b1", accent="#57c8ff", ok="#6ccb5f", warn="#f5a524",
-                 preview="#262a30", preview3d="#22262c", border="#3a3f46", header="#23272d"),
+    "light": dict(bg="#f1faf7", fg="#0c352f", muted="#4d7a71", accent="#0f8b78",
+                  accent_dark="#0a6f60", accent_ink="#ffffff",
+                  ok="#15803d", warn="#b45309",
+                  preview="#e2f5ef", preview3d="#d8efe8", border="#c8e3db", header="#e7f6f1"),
+    "dark": dict(bg="#0b1f1b", fg="#e9f7f2", muted="#8db6ac", accent="#48d3bb",
+                 accent_dark="#33b9a2", accent_ink="#052a23",
+                 ok="#5fd39a", warn="#f0a24a",
+                 preview="#123029", preview3d="#15362e", border="#1e463d", header="#102a24"),
 }
 
 def asset_path(*parts):
@@ -315,6 +320,13 @@ class Theme:
         s.configure("Link.TLabel", foreground=c["accent"], font=f["link"])
         s.configure("Small.TButton", padding=(5, 1, 5, 2))
         s.configure("Big.Accent.TButton", padding=(18, 6, 18, 7), font=f["strong"])
+        # Our teal rather than whatever accent the theme ships with: the style name keeps its
+        # normal focus, keyboard and disabled behaviour, only the colours change.
+        s.configure("Big.Accent.TButton", background=c["accent"], foreground=c["accent_ink"])
+        s.map("Big.Accent.TButton",
+              background=[("disabled", c["border"]), ("pressed", c["accent_dark"]),
+                          ("active", c["accent_dark"])],
+              foreground=[("disabled", c["muted"])])
         s.configure("Header.TFrame", background=c["header"])
         for st in ("Header.TLabel", "HeaderMuted.TLabel", "HeaderTitle.TLabel", "HeaderPill.TLabel"):
             s.configure(st, background=c["header"])
@@ -647,7 +659,7 @@ class FontList(tk.Canvas):
         self.redraw()
 
     def _on_accent(self):
-        return "#ffffff" if self.theme.name == "light" else "#0d1420"
+        return self.theme.c.get("accent_ink", "#ffffff")
 
     def _face(self, f, px):
         key = ((f.get("family") or f.get("name") or ""), px)
@@ -834,7 +846,7 @@ class FontChooser(tk.Toplevel):
 
         foot = ttk.Frame(self, padding=(16, 12, 16, 16))
         foot.pack(side="bottom", fill="x")
-        style = "Big.Accent.TButton" if self.theme.sv else "TButton"
+        style = "Big.Accent.TButton"
         ttk.Button(foot, text="Use this font", style=style, command=self._use).pack(side="right")
         ttk.Button(foot, text="Cancel", command=self.destroy).pack(side="right", padx=(0, 8))
 
@@ -1253,7 +1265,7 @@ class App:
         oc = self._card(right, "Make the sign"); oc.grid(row=2, column=0, sticky="we")
         bt = ttk.Frame(oc); bt.grid(row=0, column=0, columnspan=3, sticky="we", pady=(0, 8))
         self.bmk_box = SmokeButton(bt, self.theme, "Make 3MF", self.make,
-                                   "Big.Accent.TButton" if self.theme.sv else "TButton")
+                                   "Big.Accent.TButton")
         self.bmk_box.pack(side="left")
         self.bmk = self.bmk_box.button
         self.bop = ttk.Button(bt, text="Open folder", command=self.open_folder, state="disabled")
@@ -1325,6 +1337,16 @@ class App:
         if not self.theme.sv:
             for m in self.menus:
                 m.configure(bg=c["bg"], fg=c["fg"])
+            # Without Sun Valley the entry fields keep their light default, which hides the
+            # light text in the dark theme: give them the theme's own field colours.
+            for st in ("TEntry", "TCombobox", "TSpinbox"):
+                self.theme.style.configure(st, fieldbackground=c["preview"], foreground=c["fg"],
+                                           background=c["bg"], insertcolor=c["fg"])
+            self.theme.style.map("TCombobox",
+                                 fieldbackground=[("readonly", c["preview"])],
+                                 foreground=[("readonly", c["fg"])],
+                                 selectbackground=[("readonly", c["accent"])],
+                                 selectforeground=[("readonly", c["accent_ink"])])
 
     def _on_theme(self):
         self.theme.apply(self.v_theme.get())
