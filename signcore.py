@@ -574,25 +574,32 @@ def recolour_snapshot(im, mask, colour):
     return Image.composite(back, im.convert("RGB"), mask)
 
 
-def preview_image(p, font, width_px=760, bg=(236, 236, 236)):
-    """Draw the sign at true proportions using the real font file. Returns (PIL image, info dict)."""
+def preview_image(p, font, width_px=760, bg=(236, 236, 236), ui=1.0):
+    """Draw the sign at true proportions using the real font file. Returns (PIL image, info dict).
+    ui: display scaling (1.5 at 150 %); the margin, shadow and dotted line grow with it."""
     from PIL import Image, ImageDraw, ImageFont
     L, H, m = float(p["length"]), float(p["height"]), float(p["margin"])
-    pad = 30
+    ui = max(1.0, float(ui or 1.0))
+    u = lambda n: max(1, int(round(n * ui)))
+    pad = u(30)
     scale = (width_px - 2 * pad) / L
     W, Hh = width_px, int(H * scale + 2 * pad)
     img = Image.new("RGB", (W, Hh), bg)
     d = ImageDraw.Draw(img)
     x0, y0, x1, y1 = pad, pad, pad + L * scale, pad + H * scale
     r = min(float(p.get("corner", 0) or 0), H / 2 - 0.01, L / 2 - 0.01) * scale
-    d.rounded_rectangle([x0 + 3, y0 + 4, x1 + 3, y1 + 4], radius=max(r, 0), fill=(200, 200, 200))
-    d.rounded_rectangle([x0, y0, x1, y1], radius=max(r, 0), fill=p["plate_color"], outline=(120, 120, 120))
+    d.rounded_rectangle([x0 + u(3), y0 + u(4), x1 + u(3), y1 + u(4)], radius=max(r, 0), fill=(200, 200, 200))
+    d.rounded_rectangle([x0, y0, x1, y1], radius=max(r, 0), fill=p["plate_color"], outline=(120, 120, 120),
+                        width=u(1))
     # margin box (dotted)
     mx0, my0, mx1, my1 = x0 + m * scale, y0 + m * scale, x1 - m * scale, y1 - m * scale
-    for xx in range(int(mx0), int(mx1), 8):
-        d.line([xx, my0, xx + 3, my0], fill=(170, 170, 170)); d.line([xx, my1, xx + 3, my1], fill=(170, 170, 170))
-    for yy in range(int(my0), int(my1), 8):
-        d.line([mx0, yy, mx0, yy + 3], fill=(170, 170, 170)); d.line([mx1, yy, mx1, yy + 3], fill=(170, 170, 170))
+    step, dash, lw = u(8), u(3), u(1)
+    for xx in range(int(mx0), int(mx1), step):
+        d.line([xx, my0, xx + dash, my0], fill=(170, 170, 170), width=lw)
+        d.line([xx, my1, xx + dash, my1], fill=(170, 170, 170), width=lw)
+    for yy in range(int(my0), int(my1), step):
+        d.line([mx0, yy, mx0, yy + dash], fill=(170, 170, 170), width=lw)
+        d.line([mx1, yy, mx1, yy + dash], fill=(170, 170, 170), width=lw)
     text = p["text"]
     info = {"ok": True}
     if not text.strip():
@@ -644,10 +651,10 @@ def preview_image(p, font, width_px=760, bg=(236, 236, 236)):
     col = Image.new("RGB", (sw, sh), p["text_color"])
     if p.get("style") == "engraved":
         shade = Image.new("RGB", (sw, sh), (90, 90, 90))
-        img.paste(shade, (int(cx - sw / 2) + 1, int(cy - sh / 2) - 1), mask)
+        img.paste(shade, (int(cx - sw / 2) + u(1), int(cy - sh / 2) - u(1)), mask)
     else:
         shade = Image.new("RGB", (sw, sh), (60, 60, 60))
-        img.paste(shade, (int(cx - sw / 2) + 2, int(cy - sh / 2) + 2), mask)
+        img.paste(shade, (int(cx - sw / 2) + u(2), int(cy - sh / 2) + u(2)), mask)
     img.paste(col, (int(cx - sw / 2), int(cy - sh / 2)), mask)
     info.update(cap_mm=k, text_w=tw_mm, text_h=th_mm,
                 fits=(tw_mm <= L - 2 * m + 0.01 and th_mm <= H - 2 * m + 0.01))

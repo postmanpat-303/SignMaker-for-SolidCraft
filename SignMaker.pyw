@@ -3,6 +3,70 @@
 import os, sys, threading, queue, traceback, subprocess, json, shutil, webbrowser, types, time, math
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+def enable_dpi_awareness():
+    """Windows: draw at the screen's real pixel density instead of being stretched (blurry).
+
+    Without this, Windows renders the whole app at 96 dpi and scales the bitmap up at 125 %,
+    150 %... display scaling, which blurs every letter. Must run before the first Tk window.
+    The Windows build also declares this in its manifest, in which case the calls below are
+    refused (already set) and we just read the result. Returns True when the process is aware.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+    except Exception:
+        return False
+    try:
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):  # Per-Monitor V2
+            return True
+    except Exception:
+        pass
+    try:
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:                     # per-monitor (8.1+)
+            return True
+    except Exception:
+        pass
+    try:
+        if ctypes.windll.user32.SetProcessDPIAware():                                 # system (Vista+)
+            return True
+    except Exception:
+        pass
+    try:                                     # refused because it is already set (manifest)?
+        v = ctypes.c_int(0)
+        if ctypes.windll.shcore.GetProcessDpiAwareness(None, ctypes.byref(v)) == 0:
+            return v.value > 0
+    except Exception:
+        pass
+    try:
+        return bool(ctypes.windll.user32.IsProcessDPIAware())
+    except Exception:
+        return False
+
+
+DPI_AWARE = enable_dpi_awareness()
+
+
+def dpi_awareness_level():
+    """0 unaware, 1 system aware, 2 per-monitor aware (Windows); None elsewhere. For the log."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        u.GetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        u.GetAwarenessFromDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        return int(u.GetAwarenessFromDpiAwarenessContext(u.GetThreadDpiAwarenessContext()))
+    except Exception:
+        try:
+            v = ctypes.c_int(0)
+            ctypes.windll.shcore.GetProcessDpiAwareness(None, ctypes.byref(v))
+            return v.value
+        except Exception:
+            return None
+
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk, filedialog, colorchooser, messagebox
@@ -13,7 +77,7 @@ try:
 except Exception:  # pragma: no cover - the app still runs on plain ttk
     sv_ttk = None
 
-__version__ = "1.1.6"
+__version__ = "1.1.7"
 
 APP_NAME = "Sign Maker for SolidCraft"
 AUTHOR = "Del (postmanpat)"
@@ -118,13 +182,87 @@ def centre_window(win, parent=None):
     w, h = win.winfo_reqwidth(), win.winfo_reqheight()
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
     if parent is not None and parent.winfo_viewable():
-        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        ox, oy = parent.winfo_rootx(), parent.winfo_rooty()
         pw, ph = parent.winfo_width(), parent.winfo_height()
-        x, y = px + (pw - w) // 2, py + (ph - h) // 2
+        x, y = ox + (pw - w) // 2, oy + (ph - h) // 2
     else:
         x, y = (sw - w) // 2, (sh - h) // 2
-    x = max(0, min(x, sw - w)); y = max(0, min(y, sh - h - 40))
+    x = max(0, min(x, sw - w)); y = max(0, min(y, sh - h - px(40)))
     win.geometry("+%d+%d" % (x, y))
+
+
+# ---------------------------------------------------------------- display scaling
+# Every size in this file is written for 100 % display scaling (96 dpi). When the app draws at
+# the screen's real density (DPI-aware on Windows), px() turns those sizes into screen pixels,
+# so the layout keeps the same physical size and proportions at 125 %, 150 %, 175 %...
+UI = 1.0            # screen pixels per layout pixel
+UI_FIXED = False    # True when UI was set from the real DPI (or SIGNMAKER_UI_SCALE)
+
+
+def px(n):
+    """A layout size (pixels at 100 %) in screen pixels."""
+    if UI == 1.0:
+        return int(n)
+    return int(round(n * UI)) if n >= 0 else -int(round(-n * UI))
+
+
+def pxs(*values):
+    """px() for a padding tuple: pxs(12, 4) or pxs((12, 4))."""
+    if len(values) == 1 and isinstance(values[0], (tuple, list)):
+        values = values[0]
+    return tuple(px(v) for v in values)
+
+
+def _system_dpi():
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            dpi = int(ctypes.windll.user32.GetDpiForSystem())
+            if dpi > 0:
+                return float(dpi)
+        except Exception:
+            pass
+        try:
+            import ctypes
+            hdc = ctypes.windll.user32.GetDC(0)
+            dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)     # LOGPIXELSX
+            ctypes.windll.user32.ReleaseDC(0, hdc)
+            if dpi > 0:
+                return float(dpi)
+        except Exception:
+            pass
+    return None
+
+
+def init_ui_scale(root):
+    """Decide UI (call right after tk.Tk(), before any widget) and match Tk's own scaling to it.
+
+    Windows, DPI-aware: UI = dpi / 96. macOS works in points already, and Linux keeps its
+    usual size, so both stay at 1.0. SIGNMAKER_UI_SCALE=1.5 forces a factor (for testing).
+    """
+    global UI, UI_FIXED
+    remember_screen_dpi(root)
+    scale = None
+    env = os.environ.get("SIGNMAKER_UI_SCALE", "").strip()
+    if env:
+        try:
+            scale = float(env)
+        except ValueError:
+            scale = None
+    elif DPI_AWARE:
+        dpi = _system_dpi() or _SCREEN_DPI
+        if dpi:
+            scale = dpi / 96.0
+    if scale:
+        UI = max(1.0, min(4.0, round(scale, 3)))
+        UI_FIXED = True
+    try:
+        # Tk sizes given in points follow this: pixels per point = dpi / 72 when scaled for the
+        # real DPI, else the 1.3 the app has always used. (Our fonts are set in pixels via px().)
+        root.tk.call("tk", "scaling", (96.0 * UI / 72.0) if UI_FIXED else 1.3)
+    except tk.TclError:
+        pass
+    return UI
 
 
 def work_area(win):
@@ -158,7 +296,7 @@ def work_area(win):
         except Exception:
             pass
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-    return 0, 0, sw, sh - 60
+    return 0, 0, sw, sh - px(60)
 
 
 _SCREEN_DPI = None   # measured before the app sets its own tk scaling
@@ -174,8 +312,10 @@ def remember_screen_dpi(root):
 
 def screen_scale(win):
     """How many screen pixels make one layout pixel (1.0 at 100 %, 1.5 at 150 % display scaling).
-    Windows reports 96 dpi to apps it scales itself, so this is 1.0 for them: their sizes are
-    already logical pixels."""
+    When the app is DPI-aware this is UI, the factor every size is scaled by. Otherwise Windows
+    reports 96 dpi to apps it scales itself, so this is 1.0 for them."""
+    if UI_FIXED:
+        return UI
     if sys.platform == "darwin":
         return 1.0                                   # Tk already works in points there
     dpi = None
@@ -197,14 +337,15 @@ COMPACT_BELOW = 860   # work-area height (layout pixels) under which the compact
 
 
 def place_main_window(root, pref_w=1180, pref_h=800):
-    """Open the main window centred and fully on screen; maximise when the screen is smaller than the layout."""
+    """Open the main window centred and fully on screen; maximise when the screen is smaller than the layout.
+    Sizes are layout pixels (100 %); the work area is in screen pixels."""
     root.update_idletasks()
     ax, ay, aw, ah = work_area(root)
-    w = max(pref_w, root.winfo_reqwidth()); h = max(pref_h, root.winfo_reqheight())
-    frame_w, frame_h = 16, 40          # window border and title bar
+    w = max(px(pref_w), root.winfo_reqwidth()); h = max(px(pref_h), root.winfo_reqheight())
+    frame_w, frame_h = px(16), px(40)  # window border and title bar
     too_big = w + frame_w > aw or h + frame_h > ah
     w = min(w, aw - frame_w); h = min(h, ah - frame_h)
-    root.minsize(min(900, w), min(600, h))
+    root.minsize(min(px(900), w), min(px(600), h))
     x = ax + (aw - w - frame_w) // 2; y = ay + (ah - h - frame_h) // 2
     root.geometry("%dx%d+%d+%d" % (w, h, max(ax, x), max(ay, y)))
     root.update_idletasks()              # finish the layout while still hidden
@@ -231,6 +372,96 @@ def place_main_window(root, pref_w=1180, pref_h=800):
     if fade:
         root.update_idletasks()
         root.after(40, lambda: root.attributes("-alpha", 1.0))
+
+
+# ---------------------------------------------------------------- Sun Valley at high DPI
+def _scale_tcl_numbers(text, scale, options):
+    """Scale the pixel numbers after the given Tcl options: "-border 5", "-padding {8 2 8 3}"."""
+    import re
+
+    def one(n):
+        n = int(n)
+        return str(n if n == 0 else max(1, int(round(n * scale))))
+
+    def sub(m):
+        val = m.group(2)
+        if val.startswith("{"):
+            return m.group(1) + "{" + " ".join(one(v) for v in val[1:-1].split()) + "}"
+        return m.group(1) + one(val)
+
+    pat = r"(-(?:%s)\s+)(\{[0-9 ]+\}|[0-9]+)(?![0-9.])" % "|".join(options)
+    return re.sub(pat, sub, text)
+
+
+def _build_scaled_sv_ttk(scale, out):
+    """A copy of the Sun Valley theme for `scale` (1.5 at 150 %): its sprite sheets are redrawn
+    larger, sprite by sprite, and every pixel size in the theme grows to match. Tk itself has no
+    way to scale a ttk image theme, so without this the buttons, switches and scrollbars would
+    stay 100 %-sized (tiny) next to the scaled text."""
+    import re
+    src = os.path.dirname(os.path.abspath(sv_ttk.__file__))
+    os.makedirs(os.path.join(out, "theme"), exist_ok=True)
+    with open(os.path.join(src, "sv.tcl"), encoding="utf-8") as f:
+        text = f.read()
+    text = re.sub(r"(-size\s+)-([0-9]+)", lambda m: "%s-%d" % (m.group(1), round(int(m.group(2)) * scale)), text)
+    text = _scale_tcl_numbers(text, scale, ["insertwidth"])
+    with open(os.path.join(out, "sv.tcl"), "w", encoding="utf-8") as f:
+        f.write(text)
+    for name in ("light", "dark"):
+        with open(os.path.join(src, "theme", name + ".tcl"), encoding="utf-8") as f:
+            text = f.read()
+        text = _scale_tcl_numbers(text, scale, ["border", "padding", "width", "height", "sashthickness",
+                                                "insertwidth"])
+        with open(os.path.join(out, "theme", name + ".tcl"), "w", encoding="utf-8") as f:
+            f.write(text)
+        with open(os.path.join(src, "theme", "sprites_%s.tcl" % name), encoding="utf-8") as f:
+            sprites = f.read()
+        items = re.findall(r"([A-Za-z0-9_-]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)",
+                           sprites.split("[list", 1)[1])
+        sheet = Image.open(os.path.join(src, "theme", "spritesheet_%s.png" % name)).convert("RGBA")
+        big = Image.new("RGBA", (int(round(sheet.width * scale)) + 1, int(round(sheet.height * scale)) + 1),
+                        (0, 0, 0, 0))
+        lines = []
+        for nm, x, y, w, h in items:
+            x, y, w, h = int(x), int(y), int(w), int(h)
+            # Scaled edges, rounded the same way for neighbours, so sprites never overlap.
+            nx, ny = int(round(x * scale)), int(round(y * scale))
+            nw = max(1, int(round((x + w) * scale)) - nx)
+            nh = max(1, int(round((y + h) * scale)) - ny)
+            big.paste(sheet.crop((x, y, x + w, y + h)).resize((nw, nh), Image.Resampling.LANCZOS), (nx, ny))
+            lines.append("  %s %d %d %d %d \\" % (nm, nx, ny, nw, nh))
+        big.save(os.path.join(out, "theme", "spritesheet_%s.png" % name))
+        with open(os.path.join(out, "theme", "sprites_%s.tcl" % name), "w", encoding="utf-8") as f:
+            f.write("set ::spriteinfo [list \\\n" + "\n".join(lines) + "\n]\n")
+
+
+def load_scaled_sv_ttk(root):
+    """At high DPI, load a Sun Valley copy drawn for the current scale instead of the 100 % one.
+    Does nothing at ~100 %, and falls back to the normal theme if anything goes wrong."""
+    if sv_ttk is None or UI < 1.1 or getattr(root, "_sv_ttk_loaded", False):
+        return
+    try:
+        import tempfile
+        ver = getattr(sv_ttk, "__version__", "") or "sv"
+        base = os.path.join(tempfile.gettempdir(), "SignMaker-sv_ttk")
+        out = os.path.join(base, "%s-%s-x%d" % (__version__, ver, round(UI * 100)))
+        if not os.path.exists(os.path.join(out, "ok")):
+            tmp = out + ".%d" % os.getpid()
+            shutil.rmtree(tmp, ignore_errors=True)
+            _build_scaled_sv_ttk(UI, tmp)
+            open(os.path.join(tmp, "ok"), "w").close()
+            try:
+                os.rename(tmp, out)
+            except OSError:                      # another copy of the app got there first
+                shutil.rmtree(out, ignore_errors=True)
+                try:
+                    os.rename(tmp, out)
+                except OSError:
+                    out = tmp
+        root.tk.call("source", os.path.join(out, "sv.tcl"))
+        root._sv_ttk_loaded = True               # sv_ttk.set_theme() then skips its own copy
+    except Exception:
+        traceback.print_exc()
 
 
 # ---------------------------------------------------------------- theme
@@ -271,13 +502,13 @@ class Theme:
         for k, (size, semi, fam) in spec.items():
             # A real "Semibold" family is already bold; otherwise ask for bold.
             weight = "bold" if semi and fam == body else "normal"
-            self.fonts[k] = tkfont.Font(root, family=fam, size=-size, weight=weight)
-        self.fonts["link"] = tkfont.Font(root, family=body, size=-14)
-        self.fonts["link_hover"] = tkfont.Font(root, family=body, size=-14, underline=True)
-        self.fonts["entry_big"] = tkfont.Font(root, family=body, size=-17)
+            self.fonts[k] = tkfont.Font(root, family=fam, size=-px(size), weight=weight)
+        self.fonts["link"] = tkfont.Font(root, family=body, size=-px(14))
+        self.fonts["link_hover"] = tkfont.Font(root, family=body, size=-px(14), underline=True)
+        self.fonts["entry_big"] = tkfont.Font(root, family=body, size=-px(17))
         for named in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
             try:
-                tkfont.nametofont(named, root).configure(family=body, size=-14)
+                tkfont.nametofont(named, root).configure(family=body, size=-px(14))
             except Exception:
                 pass
 
@@ -288,6 +519,7 @@ class Theme:
     def apply(self, name):
         self.name = "dark" if name == "dark" else "light"
         if self.sv:
+            load_scaled_sv_ttk(self.root)
             sv_ttk.set_theme(self.name, self.root)
             # Sun Valley's own fonts: same family as the rest of the app.
             for sv_name, key in (("SunValleyBodyFont", "body"), ("SunValleyCaptionFont", "small"),
@@ -306,7 +538,7 @@ class Theme:
             self.style.configure(".", background=self.c["bg"], foreground=self.c["fg"], font=self.fonts["body"])
         c, f, s = self.c, self.fonts, self.style
         s.configure("TLabelframe.Label", font=f["strong"], foreground=c["fg"])
-        s.configure("TLabelframe", padding=(12, 4, 12, 7) if self.compact else (14, 8, 14, 12))
+        s.configure("TLabelframe", padding=pxs(12, 4, 12, 7) if self.compact else pxs(14, 8, 14, 12))
         s.configure("Muted.TLabel", foreground=c["muted"], font=f["small"])
         s.configure("Info.TLabel", foreground=c["accent"], font=f["body"])
         s.configure("Ok.TLabel", foreground=c["ok"], font=f["small"])
@@ -316,10 +548,10 @@ class Theme:
         s.configure("Subtitle.TLabel", font=f["subtitle"], foreground=c["fg"])
         s.configure("Strong.TLabel", font=f["strong"], foreground=c["fg"])
         s.configure("Body.TLabel", font=f["body"], foreground=c["fg"])
-        s.configure("Pill.TLabel", font=f["small"], foreground=c["accent"], padding=(8, 1))
+        s.configure("Pill.TLabel", font=f["small"], foreground=c["accent"], padding=pxs(8, 1))
         s.configure("Link.TLabel", foreground=c["accent"], font=f["link"])
-        s.configure("Small.TButton", padding=(5, 1, 5, 2))
-        s.configure("Big.Accent.TButton", padding=(18, 6, 18, 7), font=f["strong"])
+        s.configure("Small.TButton", padding=pxs(5, 1, 5, 2))
+        s.configure("Big.Accent.TButton", padding=pxs(18, 6, 18, 7), font=f["strong"])
         # Our teal rather than whatever accent the theme ships with: the style name keeps its
         # normal focus, keyboard and disabled behaviour, only the colours change.
         s.configure("Big.Accent.TButton", background=c["accent"], foreground=c["accent_ink"])
@@ -335,7 +567,7 @@ class Theme:
         s.configure("HeaderPill.TLabel", font=f["small"], foreground=c["accent"])
         s.configure("Status.TFrame", background=c["header"])
         s.configure("Status.TLabel", background=c["header"], foreground=c["muted"], font=f["small"])
-        s.configure("Thin.Horizontal.TProgressbar", thickness=4)
+        s.configure("Thin.Horizontal.TProgressbar", thickness=px(4))
 
 
 class SmokeButton(tk.Canvas):
@@ -364,6 +596,8 @@ class SmokeButton(tk.Canvas):
 
     def __init__(self, parent, theme, text, command, style):
         self.theme = theme
+        # The margins the smoke is drawn in, in screen pixels.
+        self.PAD_X, self.PAD_TOP, self.PAD_BOTTOM = px(17), px(32), px(2)
         super().__init__(parent, borderwidth=0, highlightthickness=0, bd=0)
         self.button = ttk.Button(self, text=text, command=command, style=style)
         self._win = self.create_window(self.PAD_X, self.PAD_TOP, window=self.button, anchor="nw")
@@ -382,7 +616,8 @@ class SmokeButton(tk.Canvas):
     def _build_puffs(self):
         for e, (fx, fy, drift, rise, phase, sway) in enumerate(self.EMITTERS):
             for k in range(self.PER_EMITTER):
-                self._puffs.append(dict(fx=fx, fy=fy, drift=drift, rise=rise, sway=sway, seed=e + k * 0.07,
+                self._puffs.append(dict(fx=fx, fy=fy * UI, drift=drift * UI, rise=rise * UI, sway=sway * UI,
+                                        seed=e + k * 0.07,
                                         base=(phase + k / float(self.PER_EMITTER)) % 1.0, ox=0, oy=0))
         for _p in self._puffs:
             self._items.append(self.create_image(-100, -100, anchor="center", state="hidden"))
@@ -436,7 +671,7 @@ class SmokeButton(tk.Canvas):
         for i in range(self.STAGES):
             t = i / (self.STAGES - 1.0)
             alpha = (0.40 if dark else 0.30) * (1.0 - t) ** 0.9
-            images.append(ImageTk.PhotoImage(self._sprite(colour, 4.5 + 12.0 * t, alpha)))
+            images.append(ImageTk.PhotoImage(self._sprite(colour, (4.5 + 12.0 * t) * UI, alpha)))
         return images
 
     def set_theme(self):
@@ -496,7 +731,7 @@ class SmokeButton(tk.Canvas):
             for p, item in zip(self._puffs, self._items):
                 a = (elapsed * 0.34 + p["base"]) % 1.0
                 wave = math.sin(a * math.tau * 1.2 + p["seed"] * 9) * p["sway"] * a
-                x = p["ox"] + p["drift"] * a + wave + math.sin(a * math.tau * 2.7 + p["seed"] * 4) * 0.7 * a
+                x = p["ox"] + p["drift"] * a + wave + math.sin(a * math.tau * 2.7 + p["seed"] * 4) * 0.7 * UI * a
                 y = p["oy"] - p["rise"] * a - wave * 0.18
                 stage = min(self.STAGES - 1, int(a * self.STAGES))
                 self.coords(item, x, y)
@@ -522,13 +757,13 @@ class ScrollArea(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
         self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, width=10, height=10,
-                                yscrollincrement=24)
+                                yscrollincrement=px(24))
         self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.vsb.set)
         self.inner = ttk.Frame(self.canvas)
         self._win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
         self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.vsb.grid(row=0, column=1, sticky="ns", padx=(6, 0))
+        self.vsb.grid(row=0, column=1, sticky="ns", padx=pxs(6, 0))
         self.vsb.grid_remove()
         self.rowconfigure(0, weight=1); self.columnconfigure(0, weight=1)
         # These fire a lot: on every step of a window resize, and the inner frame on every scroll
@@ -586,7 +821,7 @@ class ScrollArea(ttk.Frame):
         shown = bool(self.vsb.winfo_manager())
         if not shown and over > 1:
             self.vsb.grid()
-        elif shown and over <= -4:              # a little slack so it does not flicker at the edge
+        elif shown and over <= -px(4):              # a little slack so it does not flicker at the edge
             self.vsb.grid_remove()
             self.canvas.yview_moveto(0)
 
@@ -625,8 +860,9 @@ class FontList(tk.Canvas):
     SAMPLE_W = 128
 
     def __init__(self, parent, theme, rows=6, on_pick=None, on_accept=None, sample="Aa Bb 123"):
-        super().__init__(parent, highlightthickness=1, borderwidth=0,
-                         height=rows * self.ROW_H, width=240)
+        self.ROW_H, self.SAMPLE_W = px(42), px(128)     # screen pixels
+        super().__init__(parent, highlightthickness=px(1), borderwidth=0,
+                         height=rows * self.ROW_H, width=px(240))
         self.theme = theme
         self.rows = rows
         self.sample = sample
@@ -661,12 +897,12 @@ class FontList(tk.Canvas):
     def _on_accent(self):
         return self.theme.c.get("accent_ink", "#ffffff")
 
-    def _face(self, f, px):
-        key = ((f.get("family") or f.get("name") or ""), px)
+    def _face(self, f, size):
+        key = ((f.get("family") or f.get("name") or ""), size)
         face = self._faces.get(key)
         if face is None:
             try:
-                face = tkfont.Font(self, family=key[0], size=-px)
+                face = tkfont.Font(self, family=key[0], size=-size)
             except tk.TclError:
                 face = self.theme.fonts["body"]
             self._faces[key] = face
@@ -718,11 +954,11 @@ class FontList(tk.Canvas):
     # ---------------------------------------------------------------- drawing
     def redraw(self):
         self.delete("row")
-        w = max(self.winfo_width(), 40)
+        w = max(self.winfo_width(), px(40))
         total = max(1, len(self.fonts) * self.ROW_H)
         self.configure(scrollregion=(0, 0, w, total))
         if not self.fonts:
-            self.create_text(w / 2, 30, text="No fonts found", fill=self.theme.c["muted"],
+            self.create_text(w / 2, px(30), text="No fonts found", fill=self.theme.c["muted"],
                              font=self.theme.fonts["body"], tags="row")
             return
         top, view = self.canvasy(0), self.winfo_height()
@@ -738,14 +974,14 @@ class FontList(tk.Canvas):
         chosen = name == self.current
         if chosen or name == self.hover:
             fill = self.theme.c["accent"] if chosen else self.theme.c["preview"]
-            self.create_rectangle(2, y + 1, w - 2, y + self.ROW_H - 2,
+            self.create_rectangle(px(2), y + 1, w - px(2), y + self.ROW_H - px(2),
                                   fill=fill, outline="", tags="row")
         fg = self._on_accent() if chosen else self.theme.c["fg"]
-        face = self._face(f, 15)
-        self.create_text(12, y + self.ROW_H / 2, anchor="w", tags="row", fill=fg, font=face,
-                         text=self._fit(face, name, w - self.SAMPLE_W - 34))
-        sface = self._face(f, 13)
-        self.create_text(w - 12, y + self.ROW_H / 2, anchor="e", tags="row",
+        face = self._face(f, px(15))
+        self.create_text(px(12), y + self.ROW_H / 2, anchor="w", tags="row", fill=fg, font=face,
+                         text=self._fit(face, name, w - self.SAMPLE_W - px(34)))
+        sface = self._face(f, px(13))
+        self.create_text(w - px(12), y + self.ROW_H / 2, anchor="e", tags="row",
                          fill=fg if chosen else self.theme.c["muted"], font=sface,
                          text=self._fit(sface, self.sample, self.SAMPLE_W))
 
@@ -802,58 +1038,58 @@ class FontChooser(tk.Toplevel):
         self.title("Choose a font")
         self.transient(parent)
         self.configure(bg=self.theme.c["bg"])
-        self.minsize(760, 520)
+        self.minsize(px(760), px(520))
 
-        head = ttk.Frame(self, padding=(16, 14, 16, 6))
+        head = ttk.Frame(self, padding=pxs(16, 14, 16, 6))
         head.pack(fill="x")
         ttk.Label(head, text="Choose a font", font=self.theme.fonts["large"]).pack(side="left")
         ttk.Label(head, text="Every name is drawn in its own typeface",
-                  style="Muted.TLabel").pack(side="left", padx=(12, 0))
+                  style="Muted.TLabel").pack(side="left", padx=pxs(12, 0))
 
-        row = ttk.Frame(self, padding=(16, 0, 16, 8))
+        row = ttk.Frame(self, padding=pxs(16, 0, 16, 8))
         row.pack(fill="x")
-        ttk.Label(row, text="Search", style="Muted.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Label(row, text="Search", style="Muted.TLabel").pack(side="left", padx=pxs(0, 8))
         self.v_search = tk.StringVar()
         entry = ttk.Entry(row, textvariable=self.v_search)
         entry.pack(side="left", fill="x", expand=True)
         self.v_search.trace_add("write", lambda *a: self._filter())
 
-        body = ttk.Frame(self, padding=(16, 0, 16, 0))
+        body = ttk.Frame(self, padding=pxs(16, 0, 16, 0))
         body.pack(fill="both", expand=True)
         # The preview keeps a fixed width so the font list gets every spare pixel.
-        right = ttk.Frame(body, width=300)
+        right = ttk.Frame(body, width=px(300))
         right.pack(side="right", fill="y")
         right.pack_propagate(False)
         left = ttk.Frame(body)
-        left.pack(side="left", fill="both", expand=True, padx=(0, 16))
+        left.pack(side="left", fill="both", expand=True, padx=pxs(0, 16))
 
         self.list = FontList(left, self.theme, rows=9, on_pick=self._preview,
                              on_accept=self._use_name)
         sb = ttk.Scrollbar(left, command=self.list.yview)
         self.list.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y", padx=(4, 0))
+        sb.pack(side="right", fill="y", padx=pxs(4, 0))
         self.list.pack(side="left", fill="both", expand=True)
 
-        self.preview = tk.Canvas(right, bg=self.theme.c["preview"], highlightthickness=1,
-                                 highlightbackground=self.theme.c["border"], height=200)
+        self.preview = tk.Canvas(right, bg=self.theme.c["preview"], highlightthickness=px(1),
+                                 highlightbackground=self.theme.c["border"], height=px(200))
         self.preview.pack(fill="x")
         self.preview.bind("<Configure>", lambda e: self._draw_preview())
-        self.l_name = ttk.Label(right, style="Info.TLabel", wraplength=280)
-        self.l_name.pack(anchor="w", pady=(10, 0))
-        self.l_hint = ttk.Label(right, style="Muted.TLabel", wraplength=280,
+        self.l_name = ttk.Label(right, style="Info.TLabel", wraplength=px(280))
+        self.l_name.pack(anchor="w", pady=pxs(10, 0))
+        self.l_hint = ttk.Label(right, style="Muted.TLabel", wraplength=px(280),
                                 text="This is how your wording will look. Double-click a name to apply it.")
-        self.l_hint.pack(anchor="w", pady=(6, 0))
+        self.l_hint.pack(anchor="w", pady=pxs(6, 0))
 
-        foot = ttk.Frame(self, padding=(16, 12, 16, 16))
+        foot = ttk.Frame(self, padding=pxs(16, 12, 16, 16))
         foot.pack(side="bottom", fill="x")
         style = "Big.Accent.TButton"
         ttk.Button(foot, text="Use this font", style=style, command=self._use).pack(side="right")
-        ttk.Button(foot, text="Cancel", command=self.destroy).pack(side="right", padx=(0, 8))
+        ttk.Button(foot, text="Cancel", command=self.destroy).pack(side="right", padx=pxs(0, 8))
 
         self._filter()
         self.update_idletasks()
-        w = min(980, max(760, parent.winfo_width() - 80))
-        h = min(720, max(520, parent.winfo_height() - 80))
+        w = min(px(980), max(px(760), parent.winfo_width() - px(80)))
+        h = min(px(720), max(px(520), parent.winfo_height() - px(80)))
         self.geometry("%dx%d+%d+%d" % (w, h,
                                        parent.winfo_rootx() + (parent.winfo_width() - w) // 2,
                                        parent.winfo_rooty() + (parent.winfo_height() - h) // 2))
@@ -895,7 +1131,7 @@ class FontChooser(tk.Toplevel):
     def _draw_preview(self):
         cv = self.preview
         cv.delete("all")
-        w, h = max(cv.winfo_width(), 60), max(cv.winfo_height(), 60)
+        w, h = max(cv.winfo_width(), px(60)), max(cv.winfo_height(), px(60))
         name = self.list.current
         f = self.app.font_by_name.get(name) if name else None
         if not f:
@@ -903,18 +1139,18 @@ class FontChooser(tk.Toplevel):
             return
         family = f.get("family") or f["name"]
         wording = (self.app.v_text.get() or "").strip() or "Workshop"
-        px = 44
-        face = tkfont.Font(self, family=family, size=-px)
-        while px > 12:
-            face = tkfont.Font(self, family=family, size=-px)
+        size = px(44)
+        face = tkfont.Font(self, family=family, size=-size)
+        while size > px(12):
+            face = tkfont.Font(self, family=family, size=-size)
             try:
-                fits = (face.measure(wording) <= w - 24
-                        and face.metrics("linespace") <= h - 20)
+                fits = (face.measure(wording) <= w - px(24)
+                        and face.metrics("linespace") <= h - px(20))
             except tk.TclError:
                 fits = True
             if fits:
                 break
-            px -= 2
+            size -= max(1, px(2))
         cv.create_text(w / 2, h / 2, text=wording, font=face, fill=self.theme.c["fg"])
         self.l_name.configure(text="%s   ·   %s" % (f["name"], f.get("style") or "Regular"))
 
@@ -951,20 +1187,20 @@ class AboutDialog(tk.Toplevel):
         self.resizable(False, False)
         self.configure(bg=c["bg"])
         self.transient(parent)
-        wrap = 470
-        outer = ttk.Frame(self, padding=(34, 26, 34, 22)); outer.pack(fill="both", expand=True)
+        wrap = px(470)
+        outer = ttk.Frame(self, padding=pxs(34, 26, 34, 22)); outer.pack(fill="both", expand=True)
 
-        self._icon = icon_image(96)
+        self._icon = icon_image(px(96))
         if self._icon is not None:
-            ttk.Label(outer, image=self._icon).pack(pady=(0, 10))
+            ttk.Label(outer, image=self._icon).pack(pady=pxs(0, 10))
         ttk.Label(outer, text=APP_NAME, style="Subtitle.TLabel").pack()
-        ttk.Label(outer, text="Version " + __version__, style="Pill.TLabel").pack(pady=(2, 10))
+        ttk.Label(outer, text="Version " + __version__, style="Pill.TLabel").pack(pady=pxs(2, 10))
         ttk.Label(outer, text="Type your wording, pick a font and colours, and Sign Maker builds a two-colour "
                               "sign ready for your slicer: a plate with raised or inlaid lettering, saved as one "
                               "3MF with a dimension picture.",
                   style="Body.TLabel", wraplength=wrap, justify="center").pack()
 
-        ttk.Label(outer, text="Created by " + AUTHOR, style="Strong.TLabel").pack(pady=(16, 2))
+        ttk.Label(outer, text="Created by " + AUTHOR, style="Strong.TLabel").pack(pady=pxs(16, 2))
         row = ttk.Frame(outer); row.pack()
         Link(row, "github.com/postmanpat-303", AUTHOR_URL, theme).pack(side="left")
         ttk.Label(row, text="  ·  ", style="Muted.TLabel").pack(side="left")
@@ -973,31 +1209,31 @@ class AboutDialog(tk.Toplevel):
         Link(row, "Releases", RELEASES_URL, theme).pack(side="left")
 
         ttk.Label(outer, text="If you find Sign Maker useful, you can buy me a coffee ☕",
-                  style="Body.TLabel", wraplength=wrap, justify="center").pack(pady=(18, 8))
+                  style="Body.TLabel", wraplength=wrap, justify="center").pack(pady=pxs(18, 8))
         ttk.Button(outer, text="☕  Buy me a coffee", style="Big.Accent.TButton",
                    command=lambda: open_url(DONATE_URL)).pack()
-        row = ttk.Frame(outer); row.pack(pady=(6, 0))
-        ttk.Label(row, text="or PayPal:", style="Muted.TLabel").pack(side="left", padx=(0, 4))
+        row = ttk.Frame(outer); row.pack(pady=pxs(6, 0))
+        ttk.Label(row, text="or PayPal:", style="Muted.TLabel").pack(side="left", padx=pxs(0, 4))
         Link(row, "paypal.me/derekh100", PAYPAL_URL, theme).pack(side="left")
 
-        ttk.Separator(outer).pack(fill="x", pady=16)
+        ttk.Separator(outer).pack(fill="x", pady=px(16))
         ttk.Label(outer, text="Built with SolidCraft  ♥", style="Strong.TLabel").pack()
         ttk.Label(outer, text="Every 3D model Sign Maker makes is built by SolidCraft, the open-source parametric "
                               "3D CAD from Tangency Labs. Sign Maker wouldn't exist without it. A big, warm thank "
                               "you to the SolidCraft team for such a great tool.",
-                  style="Body.TLabel", wraplength=wrap, justify="center").pack(pady=(4, 4))
+                  style="Body.TLabel", wraplength=wrap, justify="center").pack(pady=pxs(4, 4))
         Link(outer, "github.com/tangency-labs/solidcraft", SOLIDCRAFT_URL, theme).pack()
 
-        ttk.Separator(outer).pack(fill="x", pady=16)
+        ttk.Separator(outer).pack(fill="x", pady=px(16))
         ttk.Label(outer, text="Sign Maker is an unofficial community add-on. It is not affiliated with or endorsed "
                               "by Tangency Labs or the SolidCraft project. SolidCraft is installed separately.",
                   style="Muted.TLabel", wraplength=wrap, justify="center").pack()
-        row = ttk.Frame(outer); row.pack(pady=(8, 0))
+        row = ttk.Frame(outer); row.pack(pady=pxs(8, 0))
         Link(row, "MIT licence", LICENSE_URL, theme).pack(side="left")
         ttk.Label(row, text="  ·  © 2026 " + AUTHOR, style="Muted.TLabel").pack(side="left")
-        ttk.Label(outer, text="Thanks. :)", style="Muted.TLabel").pack(pady=(6, 0))
+        ttk.Label(outer, text="Thanks. :)", style="Muted.TLabel").pack(pady=pxs(6, 0))
         close = ttk.Button(outer, text="Close", command=self.close, width=12)
-        close.pack(pady=(16, 0))
+        close.pack(pady=pxs(16, 0))
 
         self.bind("<Escape>", lambda e: self.close())
         self.bind("<Return>", lambda e: self.close())
@@ -1047,11 +1283,11 @@ class App:
         self._fit_after = None
         self._compact = None         # compact layout for short screens (None until first decided)
         self._tight = False          # very short screen: smaller 2D preview still
-        self._max2d_h = 360          # tallest the 2D preview may be drawn
+        self._max2d_h = px(360)      # tallest the 2D preview may be drawn (screen pixels)
         self._layout_after = None
         self._last_work = None
         self._2d_after = None
-        self._2d_limit = 1100        # widest the 2D preview may be for the current plate
+        self._2d_limit = px(1100)    # widest the 2D preview may be for the current plate
         self._fit_key = None         # (image, theme, size) the 3D view was last fitted for
         self._dark3d = None          # (image, recoloured copy) for the dark theme
         self.theme = Theme(root)
@@ -1125,11 +1361,11 @@ class App:
         r.columnconfigure(0, weight=1); r.rowconfigure(1, weight=1)
 
         # header
-        hd = ttk.Frame(r, style="Header.TFrame", padding=(18, 10, 18, 10)); hd.grid(row=0, column=0, sticky="we")
+        hd = ttk.Frame(r, style="Header.TFrame", padding=pxs(18, 10, 18, 10)); hd.grid(row=0, column=0, sticky="we")
         self._hd = hd
-        self._hicon = icon_image(40)
+        self._hicon = icon_image(px(40))
         if self._hicon is not None:
-            ttk.Label(hd, image=self._hicon, style="Header.TLabel").pack(side="left", padx=(0, 12))
+            ttk.Label(hd, image=self._hicon, style="Header.TLabel").pack(side="left", padx=pxs(0, 12))
         tbox = ttk.Frame(hd, style="Header.TFrame"); tbox.pack(side="left")
         ttk.Label(tbox, text="Sign Maker", style="HeaderTitle.TLabel").pack(anchor="w")
         ttk.Label(tbox, text="Two-colour 3D-print signs, built with SolidCraft",
@@ -1137,80 +1373,80 @@ class App:
         ttk.Label(hd, text="v" + __version__, style="HeaderPill.TLabel").pack(side="right")
         self.v_dark = tk.BooleanVar(value=self.theme.name == "dark")
         ttk.Checkbutton(hd, text="Dark", style="Switch.TCheckbutton" if self.theme.sv else "TCheckbutton",
-                        variable=self.v_dark, command=self._on_dark_switch).pack(side="right", padx=(0, 18))
+                        variable=self.v_dark, command=self._on_dark_switch).pack(side="right", padx=pxs(0, 18))
 
-        body = ttk.Frame(r, padding=(14, 10, 14, 4)); body.grid(row=1, column=0, sticky="nsew")
+        body = ttk.Frame(r, padding=pxs(14, 10, 14, 4)); body.grid(row=1, column=0, sticky="nsew")
         self._body = body
         body.columnconfigure(1, weight=1); body.rowconfigure(0, weight=1)
         # The left column scrolls when the screen is too short for it (small laptops, display scaling).
-        self.scroll = ScrollArea(body); self.scroll.grid(row=0, column=0, sticky="nsw", padx=(0, 12))
+        self.scroll = ScrollArea(body); self.scroll.grid(row=0, column=0, sticky="nsw", padx=pxs(0, 12))
         left = self.scroll.inner
         right = ttk.Frame(body); right.grid(row=0, column=1, sticky="nsew")
         left.columnconfigure(0, weight=1)
 
         # --- wording + favourites
-        wc = self._card(left, "Wording"); wc.grid(row=0, column=0, sticky="we", pady=(0, 8))
+        wc = self._card(left, "Wording"); wc.grid(row=0, column=0, sticky="we", pady=pxs(0, 8))
         self._gap_cards = [wc]
         self.v_text = tk.StringVar(value=self.s["text"])
         self.e_text = ttk.Entry(wc, textvariable=self.v_text, font=self.theme.fonts["entry_big"])
         self.e_text.grid(row=0, column=0, columnspan=4, sticky="we")
-        acc = ttk.Frame(wc); acc.grid(row=1, column=0, columnspan=4, sticky="w", pady=(6, 6))
+        acc = ttk.Frame(wc); acc.grid(row=1, column=0, columnspan=4, sticky="w", pady=pxs(6, 6))
         for ch in "áéíóúÁÉÍÓÚ⁊":
             ttk.Button(acc, text=ch, width=2, style="Small.TButton",
-                       command=lambda c=ch: self._insert(c)).pack(side="left", padx=(0, 3))
-        ttk.Label(wc, text="Favourites", style="Muted.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 6))
+                       command=lambda c=ch: self._insert(c)).pack(side="left", padx=pxs(0, 3))
+        ttk.Label(wc, text="Favourites", style="Muted.TLabel").grid(row=2, column=0, sticky="w", padx=pxs(0, 6))
         self.cb_fav = ttk.Combobox(wc, width=22, state="readonly"); self.cb_fav.grid(row=2, column=1, sticky="we")
-        fb = ttk.Frame(wc); fb.grid(row=2, column=2, columnspan=2, sticky="e", padx=(6, 0))
-        ttk.Button(fb, text="Use", command=self.use_fav, style="Small.TButton").pack(side="left", padx=(0, 3))
-        ttk.Button(fb, text="Add", command=self.add_fav, style="Small.TButton").pack(side="left", padx=(0, 3))
+        fb = ttk.Frame(wc); fb.grid(row=2, column=2, columnspan=2, sticky="e", padx=pxs(6, 0))
+        ttk.Button(fb, text="Use", command=self.use_fav, style="Small.TButton").pack(side="left", padx=pxs(0, 3))
+        ttk.Button(fb, text="Add", command=self.add_fav, style="Small.TButton").pack(side="left", padx=pxs(0, 3))
         ttk.Button(fb, text="Remove", command=self.del_fav, style="Small.TButton").pack(side="left")
         wc.columnconfigure(1, weight=1)
         self._refresh_favs()
 
         # --- font
-        fc = self._card(left, "Font"); fc.grid(row=1, column=0, sticky="we", pady=(0, 8))
+        fc = self._card(left, "Font"); fc.grid(row=1, column=0, sticky="we", pady=pxs(0, 8))
         self._gap_cards.append(fc)
         self.v_search = tk.StringVar()
         se = ttk.Frame(fc); se.grid(row=0, column=0, sticky="we")
-        ttk.Label(se, text="Search", style="Muted.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Label(se, text="Search", style="Muted.TLabel").pack(side="left", padx=pxs(0, 8))
         ttk.Entry(se, textvariable=self.v_search).pack(side="left", fill="x", expand=True)
-        fl = ttk.Frame(fc); fl.grid(row=1, column=0, sticky="we", pady=(6, 4))
+        fl = ttk.Frame(fc); fl.grid(row=1, column=0, sticky="we", pady=pxs(6, 4))
         self._lbframe = fl
         self.fontlist = FontList(fl, self.theme, rows=6, on_pick=self._on_font_pick,
                                  on_accept=self.open_font_chooser)
         sb = ttk.Scrollbar(fl, command=self.fontlist.yview)
         self.fontlist.configure(yscrollcommand=sb.set)
-        self.fontlist.pack(side="left", fill="both", expand=True); sb.pack(side="left", fill="y", padx=(4, 0))
-        fr = ttk.Frame(fc); fr.grid(row=2, column=0, sticky="we", pady=(4, 0))
+        self.fontlist.pack(side="left", fill="both", expand=True); sb.pack(side="left", fill="y", padx=pxs(4, 0))
+        fr = ttk.Frame(fc); fr.grid(row=2, column=0, sticky="we", pady=pxs(4, 0))
         self.v_fontname = tk.StringVar(value=self.s["font"])
         ttk.Label(fr, textvariable=self.v_fontname, style="Info.TLabel").pack(side="left")
         ttk.Button(fr, text="Choose font…", command=self.open_font_chooser).pack(side="right")
         ttk.Button(fr, text="Browse…", command=self.browse_font, style="Small.TButton").pack(
-            side="right", padx=(0, 6))
+            side="right", padx=pxs(0, 6))
         self.v_bold = tk.BooleanVar(value=self.s.get("bold", False))
         ttk.Checkbutton(fc, text="Bold (uses the family's bold face)", variable=self.v_bold).grid(
-            row=3, column=0, sticky="w", pady=(4, 0))
+            row=3, column=0, sticky="w", pady=pxs(4, 0))
         fc.columnconfigure(0, weight=1)
 
         # --- sizes + style
-        nf = self._card(left, "Size and style"); nf.grid(row=2, column=0, sticky="we", pady=(0, 8))
+        nf = self._card(left, "Size and style"); nf.grid(row=2, column=0, sticky="we", pady=pxs(0, 8))
         self._gap_cards.append(nf)
         self.v_num = {}
         for i, (k, lab) in enumerate(NUM_FIELDS):
-            ttk.Label(nf, text=lab).grid(row=i // 2, column=(i % 2) * 2, sticky="e", padx=(6, 6), pady=2)
+            ttk.Label(nf, text=lab).grid(row=i // 2, column=(i % 2) * 2, sticky="e", padx=pxs(6, 6), pady=px(2))
             v = tk.StringVar(value=str(self.s[k])); self.v_num[k] = v
-            ttk.Entry(nf, textvariable=v, width=7).grid(row=i // 2, column=(i % 2) * 2 + 1, sticky="w", pady=2)
+            ttk.Entry(nf, textvariable=v, width=7).grid(row=i // 2, column=(i % 2) * 2 + 1, sticky="w", pady=px(2))
         row = (len(NUM_FIELDS) + 1) // 2
         self.v_auto = tk.BooleanVar(value=self.s.get("auto_size", True))
         ttk.Checkbutton(nf, text="Auto-fit text size", variable=self.v_auto).grid(row=row, column=0, columnspan=2,
-                                                                                  sticky="w", pady=2)
-        ttk.Label(nf, text="Cap height (mm)").grid(row=row, column=2, sticky="e", padx=(6, 6))
+                                                                                  sticky="w", pady=px(2))
+        ttk.Label(nf, text="Cap height (mm)").grid(row=row, column=2, sticky="e", padx=pxs(6, 6))
         self.v_size = tk.StringVar(value=str(self.s.get("text_size", 8)))
         self.e_size = ttk.Entry(nf, textvariable=self.v_size, width=7); self.e_size.grid(row=row, column=3, sticky="w")
         self.v_style = tk.StringVar(value=self.s.get("style", "raised"))
-        st = ttk.Frame(nf); st.grid(row=row + 1, column=0, columnspan=4, sticky="w", pady=(6, 0))
-        ttk.Label(st, text="Text style").pack(side="left", padx=(6, 10))
-        ttk.Radiobutton(st, text="Raised", value="raised", variable=self.v_style).pack(side="left", padx=(0, 12))
+        st = ttk.Frame(nf); st.grid(row=row + 1, column=0, columnspan=4, sticky="w", pady=pxs(6, 0))
+        ttk.Label(st, text="Text style").pack(side="left", padx=pxs(6, 10))
+        ttk.Radiobutton(st, text="Raised", value="raised", variable=self.v_style).pack(side="left", padx=pxs(0, 12))
         ttk.Radiobutton(st, text="Engraved (inlaid, flush)", value="engraved", variable=self.v_style).pack(side="left")
 
         # --- colours
@@ -1218,14 +1454,14 @@ class App:
         self.v_pc = tk.StringVar(value=self.s["plate_color"]); self.v_tc = tk.StringVar(value=self.s["text_color"])
         self.sw = {}
         for i, (lab, var) in enumerate((("Plate", self.v_pc), ("Text", self.v_tc))):
-            ttk.Label(cf, text=lab).grid(row=i, column=0, sticky="e", padx=(6, 8), pady=3)
+            ttk.Label(cf, text=lab).grid(row=i, column=0, sticky="e", padx=pxs(6, 8), pady=px(3))
             b = tk.Button(cf, width=3, bg=var.get(), activebackground=var.get(), relief="flat", borderwidth=0,
-                          highlightthickness=1, cursor="hand2", command=lambda v=var: self.pick_colour(v))
-            b.grid(row=i, column=1, padx=(0, 8), ipady=3)
+                          highlightthickness=px(1), cursor="hand2", command=lambda v=var: self.pick_colour(v))
+            b.grid(row=i, column=1, padx=pxs(0, 8), ipady=px(3))
             self.sw[str(var)] = b
-            ttk.Entry(cf, textvariable=var, width=9).grid(row=i, column=2, pady=3)
+            ttk.Entry(cf, textvariable=var, width=9).grid(row=i, column=2, pady=px(3))
             cb = ttk.Combobox(cf, values=[n for n, _ in sc.COLOUR_PRESETS], width=15, state="readonly")
-            cb.grid(row=i, column=3, padx=8, pady=3)
+            cb.grid(row=i, column=3, padx=px(8), pady=px(3))
             cb.set("Preset…")
             cb.bind("<<ComboboxSelected>>", lambda e, v=var, c=cb: v.set(dict(sc.COLOUR_PRESETS)[c.get()]))
         ttk.Button(cf, text="⇅ Swap", command=self.swap_colours).grid(row=0, column=4, rowspan=2)
@@ -1239,23 +1475,23 @@ class App:
         self.c2d.bind("<Configure>", self._on_2d_resize)
         self.v_info = tk.StringVar(value="Loading fonts…")
         self.l_info = ttk.Label(p2, textvariable=self.v_info, style="Info.TLabel")
-        self.l_info.pack(anchor="w", pady=(6, 0))
+        self.l_info.pack(anchor="w", pady=pxs(6, 0))
 
         # --- right: 3D preview
         p3 = self._card(right, "3D preview  ·  rendered by SolidCraft, what will print")
-        p3.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
+        p3.grid(row=1, column=0, sticky="nsew", pady=pxs(8, 8))
         self._p3 = p3
-        bar = ttk.Frame(p3); bar.pack(fill="x", pady=(0, 6))
+        bar = ttk.Frame(p3); bar.pack(fill="x", pady=pxs(0, 6))
         ttk.Checkbutton(bar, text="Auto 3D preview", variable=self.v_auto3d, command=self._on_auto3d,
                         style="Switch.TCheckbutton" if self.theme.sv else "TCheckbutton").pack(side="left")
         self.b3d = ttk.Button(bar, text="Refresh 3D preview", command=lambda: self.refresh_3d(manual=True))
-        self.b3d.pack(side="left", padx=(12, 0))
+        self.b3d.pack(side="left", padx=pxs(12, 0))
         self.v_3dstate = tk.StringVar()
         self.l_3dstate = ttk.Label(bar, textvariable=self.v_3dstate, style="Muted.TLabel")
         self.l_3dstate.pack(side="right")
-        self.pb3d = ttk.Progressbar(bar, mode="indeterminate", length=90)
+        self.pb3d = ttk.Progressbar(bar, mode="indeterminate", length=px(90))
         # A fixed-size holder: the picture follows the window, never the other way round.
-        self.f3d = tk.Frame(p3, height=320, borderwidth=0, highlightthickness=0)
+        self.f3d = tk.Frame(p3, height=px(320), borderwidth=0, highlightthickness=0)
         self.f3d.pack(fill="both", expand=True); self.f3d.pack_propagate(False)
         self.c3d = tk.Label(self.f3d, borderwidth=0, highlightthickness=0, text="")
         self.c3d.pack(fill="both", expand=True)
@@ -1263,28 +1499,28 @@ class App:
 
         # --- right: make + paths
         oc = self._card(right, "Make the sign"); oc.grid(row=2, column=0, sticky="we")
-        bt = ttk.Frame(oc); bt.grid(row=0, column=0, columnspan=3, sticky="we", pady=(0, 8))
+        bt = ttk.Frame(oc); bt.grid(row=0, column=0, columnspan=3, sticky="we", pady=pxs(0, 8))
         self.bmk_box = SmokeButton(bt, self.theme, "Make 3MF", self.make,
                                    "Big.Accent.TButton")
         self.bmk_box.pack(side="left")
         self.bmk = self.bmk_box.button
         self.bop = ttk.Button(bt, text="Open folder", command=self.open_folder, state="disabled")
-        self.bop.pack(side="left", padx=(10, 0), anchor="s", pady=(0, SmokeButton.PAD_BOTTOM))
+        self.bop.pack(side="left", padx=pxs(10, 0), anchor="s", pady=(0, self.bmk_box.PAD_BOTTOM))
         self.v_stl = tk.BooleanVar(value=self.s.get("stl", False))
         ttk.Checkbutton(bt, text="Also save separate STLs", variable=self.v_stl).pack(
-            side="left", padx=(16, 0), anchor="s", pady=(0, SmokeButton.PAD_BOTTOM))
-        ttk.Label(oc, text="Save folder", style="Muted.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10))
+            side="left", padx=pxs(16, 0), anchor="s", pady=(0, self.bmk_box.PAD_BOTTOM))
+        ttk.Label(oc, text="Save folder", style="Muted.TLabel").grid(row=1, column=0, sticky="w", padx=pxs(0, 10))
         self.v_out = tk.StringVar(value=sc.output_root(self.s))
-        ttk.Entry(oc, textvariable=self.v_out).grid(row=1, column=1, sticky="we", pady=2)
-        ttk.Button(oc, text="Browse…", command=self.browse_output, style="Small.TButton").grid(row=1, column=2, padx=(8, 0))
-        ttk.Label(oc, text="solidcraft-cli", style="Muted.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 10))
+        ttk.Entry(oc, textvariable=self.v_out).grid(row=1, column=1, sticky="we", pady=px(2))
+        ttk.Button(oc, text="Browse…", command=self.browse_output, style="Small.TButton").grid(row=1, column=2, padx=pxs(8, 0))
+        ttk.Label(oc, text="solidcraft-cli", style="Muted.TLabel").grid(row=2, column=0, sticky="w", padx=pxs(0, 10))
         self.v_cli = tk.StringVar(value=(self.s.get("cli_path") or ""))
-        ttk.Entry(oc, textvariable=self.v_cli).grid(row=2, column=1, sticky="we", pady=2)
-        ttk.Button(oc, text="Browse…", command=self.browse_cli, style="Small.TButton").grid(row=2, column=2, padx=(8, 0))
+        ttk.Entry(oc, textvariable=self.v_cli).grid(row=2, column=1, sticky="we", pady=px(2))
+        ttk.Button(oc, text="Browse…", command=self.browse_cli, style="Small.TButton").grid(row=2, column=2, padx=pxs(8, 0))
         self.v_savehint = tk.StringVar()
         self._l_savehint = ttk.Label(oc, textvariable=self.v_savehint, style="Muted.TLabel")
         self._l_savehint.grid(row=3, column=0, columnspan=3,
-                                                                           sticky="w", pady=(4, 0))
+                                                                           sticky="w", pady=pxs(4, 0))
         oc.columnconfigure(1, weight=1)
         self.v_out.trace_add("write", lambda *a: self._update_save_hint())
         self._update_save_hint()
@@ -1301,7 +1537,7 @@ class App:
                     w.bind(seq, self._on_wheel_break)
 
         # status bar
-        sbar = ttk.Frame(r, style="Status.TFrame", padding=(18, 4)); sbar.grid(row=2, column=0, sticky="we")
+        sbar = ttk.Frame(r, style="Status.TFrame", padding=pxs(18, 4)); sbar.grid(row=2, column=0, sticky="we")
         self.v_status = tk.StringVar(value="")
         ttk.Label(sbar, textvariable=self.v_status, style="Status.TLabel").pack(side="left")
         ttk.Label(sbar, text="Made by " + AUTHOR + "  ·  Powered by SolidCraft",
@@ -1501,7 +1737,7 @@ class App:
             w = self._target_2d(w)
             self._w2d = w
             bg = tuple(int(self.theme.c["preview"][i:i + 2], 16) for i in (1, 3, 5))
-            img, info = sc.preview_image(p, f, width_px=w, bg=bg)
+            img, info = sc.preview_image(p, f, width_px=w, bg=bg, ui=UI)
         except Exception as ex:
             self.v_info.set("⚠ Preview failed: %s" % ex); self.l_info.configure(style="Warn.TLabel"); return
         self._img2d = ImageTk.PhotoImage(img); self.c2d.config(image=self._img2d)
@@ -1523,14 +1759,15 @@ class App:
         try:
             L, H = float(p["length"]), float(p["height"])
             if L > 0 and H > 0:
-                return max(200, min(1100, int((self._max2d_h - 60) * L / H) + 60))
+                pad = 2 * px(30)                     # preview_image's margin, both sides
+                return max(px(200), min(px(1100), int((self._max2d_h - pad) * L / H) + pad))
         except (TypeError, ValueError, KeyError):
             pass
-        return 1100
+        return px(1100)
 
     def _target_2d(self, avail):
-        w = 760 if avail < 50 else max(200, min(avail, 1100))
-        return max(200, min(w, self._2d_limit))
+        w = px(760) if avail < 50 else max(px(200), min(avail, px(1100)))
+        return max(px(200), min(w, self._2d_limit))
 
     def _on_2d_resize(self, e):
         # Redraw only when the picture would really change size, and only once a resize settles.
@@ -1553,7 +1790,7 @@ class App:
             if abs(w - self._w2d) <= 2:
                 return
             bg = tuple(int(self.theme.c["preview"][i:i + 2], 16) for i in (1, 3, 5))
-            img, _ = sc.preview_image(p, f, width_px=w, bg=bg)
+            img, _ = sc.preview_image(p, f, width_px=w, bg=bg, ui=UI)
         except Exception:
             self.schedule(0); return
         self._w2d = w
@@ -1631,16 +1868,16 @@ class App:
     def _set_compact(self, compact):
         self._compact = compact
         self.theme.compact = compact
-        self.theme.style.configure("TLabelframe", padding=(12, 4, 12, 7) if compact else (14, 8, 14, 12))
-        self._hd.configure(padding=(18, 5, 18, 5) if compact else (18, 10, 18, 10))
-        self._body.configure(padding=(12, 6, 12, 2) if compact else (14, 10, 14, 4))
+        self.theme.style.configure("TLabelframe", padding=pxs(12, 4, 12, 7) if compact else pxs(14, 8, 14, 12))
+        self._hd.configure(padding=pxs(18, 5, 18, 5) if compact else pxs(18, 10, 18, 10))
+        self._body.configure(padding=pxs(12, 6, 12, 2) if compact else pxs(14, 10, 14, 4))
         for c in self._gap_cards:
-            c.grid_configure(pady=(0, 4) if compact else (0, 8))
-        self._p3.grid_configure(pady=(4, 4) if compact else (8, 8))
+            c.grid_configure(pady=pxs(0, 4) if compact else pxs(0, 8))
+        self._p3.grid_configure(pady=pxs(4, 4) if compact else pxs(8, 8))
         self.fontlist.set_rows(4 if compact else 6)
-        self.f3d.configure(height=180 if compact else 320)
+        self.f3d.configure(height=px(180) if compact else px(320))
         old = self._max2d_h
-        self._max2d_h = (120 if self._tight else 170) if compact else 360
+        self._max2d_h = px((120 if self._tight else 170) if compact else 360)
         if compact and self._tight:
             self._l_savehint.grid_remove()       # the folder is in the field above anyway
         else:
@@ -1691,7 +1928,7 @@ class App:
         self.v_3dstate.set(text[:90]); self.l_3dstate.configure(style=style)
         if state == "busy":
             if not self.pb3d.winfo_manager():
-                self.pb3d.pack(side="right", padx=(0, 10)); self.pb3d.start(12)
+                self.pb3d.pack(side="right", padx=pxs(0, 10)); self.pb3d.start(12)
         elif self.pb3d.winfo_manager():
             self.pb3d.stop(); self.pb3d.pack_forget()
         if self._im3d is None:
@@ -1780,9 +2017,11 @@ class App:
             w = int(self.c3d.winfo_width())
         except Exception:
             w = 0
-        if w < 320:                       # not laid out yet: keep the old default
+        if w < px(320):                   # not laid out yet: keep the old default
             return (1200, 700)
-        w = max(480, min(1200, w))
+        # Screen pixels: at 150 % the pane is 1.5x as many pixels, so render that many for a
+        # sharp picture (capped, since SolidCraft's snapshot time grows with its size).
+        w = max(480, min(min(2400, px(1200)), w))
         return (w, max(1, round(w * 700 / 1200)))
 
     def _worker3d(self, job, p, f, snap=(1200, 700)):
@@ -1826,7 +2065,7 @@ class App:
         self._fit_after = None
         if self._im3d is None:
             return
-        w = max(300, self.f3d.winfo_width() - 8); h = max(200, self.f3d.winfo_height() - 8)
+        w = max(px(300), self.f3d.winfo_width() - px(8)); h = max(px(200), self.f3d.winfo_height() - px(8))
         key = (id(self._im3d), self.theme.name, self.theme.c["preview3d"], w, h)
         if key == self._fit_key:
             return                                  # already showing exactly this
@@ -2183,8 +2422,25 @@ def selftest():
     log = ["version: " + __version__, "theme: " + ("sv-ttk" if sv_ttk else "plain ttk")]
     os.makedirs(sc.DATA_DIR, exist_ok=True)
     root = tk.Tk(); root.withdraw()
+    init_ui_scale(root)
+    log.append("ui scale: %.2f (dpi aware: %s)" % (UI, DPI_AWARE))
     app = App(root, selftest=True)
     log.append("ui font: " + app.theme.family)
+    log.append("dpi awareness: %s, tk scaling %.3f" % (dpi_awareness_level(), float(root.tk.call("tk", "scaling"))))
+    body = app.theme.fonts["body"]
+    line, wide = body.metrics("linespace"), body.measure("Welcome")
+    log.append("body font: %s, %d px line, 'Welcome' %d px" % (body.actual("family"), line, wide))
+    if UI >= 1.1 and body.actual("family").lower() not in ("fixed", "misc fixed"):
+        # Scalable font: text must grow with the display scale (a bitmap X11 font cannot).
+        base = tkfont.Font(root, family=body.actual("family"), size=-14).metrics("linespace")
+        if line < base * UI * 0.85:
+            raise RuntimeError("fonts did not scale: %d px line at %.2fx (100%%: %d px)" % (line, UI, base))
+    if app.theme.sv and UI >= 1.1:
+        # High DPI: the Sun Valley sprites must be the scaled copy, not the 100 % sheet.
+        sheet_w = int(root.tk.call("image", "width", "spritesheet"))
+        log.append("sv-ttk sprites: %d px wide sheet at %.2fx" % (sheet_w, UI))
+        if sheet_w < 214 * UI - 2:
+            raise RuntimeError("Sun Valley theme was not scaled (sheet %d px)" % sheet_w)
     log.append("fonts: %d" % len(app.fonts))
     pairs = (
         ("serif", sc.SERIF_FONT_NAMES, "Telefón", "selftest_serif.png"),
@@ -2219,7 +2475,7 @@ def selftest():
     app._set_compact(True)
     root.deiconify()          # a withdrawn window ignores geometry requests (seen on Windows)
     root.update()
-    root.geometry("1000x640")
+    root.geometry("%dx%d" % (px(1000), px(640)))
 
     def settle(seconds):
         """Pump the event loop: layout and scrollbar changes are debounced until a resize lands."""
@@ -2233,7 +2489,7 @@ def selftest():
         # per machine (this failed on the Windows runners). Make the window short enough that
         # the column must scroll, instead of assuming 640 px is short everywhere.
         for height in (560, 480, 420, 360, 300):
-            root.geometry("1000x%d" % height)
+            root.geometry("%dx%d" % (px(1000), px(height)))
             settle(0.5)
             if app.scroll.needed():
                 break
@@ -2292,11 +2548,7 @@ if __name__ == "__main__":
         sys.exit(0)
     root = tk.Tk()
     root.withdraw()                      # stay hidden until it is sized and centred
-    remember_screen_dpi(root)
-    try:
-        root.tk.call("tk", "scaling", 1.3)
-    except Exception:
-        pass
+    init_ui_scale(root)                  # real DPI on Windows, before any widget is made
     app = App(root)
     place_main_window(root)
     if "--show-about" in sys.argv:  # used for README screenshots

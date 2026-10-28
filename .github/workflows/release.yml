@@ -81,6 +81,23 @@ jobs:
           VERSION: ${{ github.ref_type == 'tag' && '' || inputs.version }}
         run: bash packaging/pyinstaller.sh
 
+      - name: DPI awareness of SignMaker.exe (manifest + frozen selftest)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = "dist\SignMaker\SignMaker.exe"
+          $m = (python -c "import sys; from PyInstaller.utils.win32.winmanifest import read_manifest_from_executable as r; print(r(sys.argv[1]).decode())" $exe) -join "`n"
+          ($m -split "`n") | Where-Object { $_ -match 'dpi' }
+          if ($m -notmatch 'PerMonitorV2') { "::error::SignMaker.exe manifest is not per-monitor DPI aware"; exit 1 }
+          Remove-Item "$env:APPDATA\SignMaker\selftest.log" -ErrorAction SilentlyContinue
+          $p = Start-Process $exe -ArgumentList '--selftest' -PassThru
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); "::error::frozen selftest timed out"; exit 1 }
+          $log = Get-Content "$env:APPDATA\SignMaker\selftest.log" -Raw
+          $log
+          if ($log -notmatch 'SELFTEST OK') { "::error::frozen selftest failed"; exit 1 }
+          if ($log -notmatch 'dpi awareness: 2') { "::error::SignMaker.exe did not run per-monitor DPI aware"; exit 1 }
+          "DPI awareness OK"
+
       - name: Silent install / uninstall of the setup exe
         if: runner.os == 'Windows'
         shell: pwsh

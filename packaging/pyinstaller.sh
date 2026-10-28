@@ -47,7 +47,8 @@ args=(
   --add-data "assets${data_sep}assets"
 )
 if [[ "$kind" == "windows" ]]; then
-  args+=(--icon "assets/icon.ico")
+  # Per-monitor DPI aware manifest: sharp text at 125 % / 150 % / 175 % display scaling.
+  args+=(--icon "assets/icon.ico" --manifest "packaging/windows/signmaker.manifest")
 elif [[ "$kind" == "macos" ]]; then
   # universal2 needs a universal2 Python. GitHub macos-latest is Apple silicon
   # and its Python is arm64 only, so the bundle matches the runner.
